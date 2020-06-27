@@ -29,8 +29,8 @@ func (c *Connect) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (c *Connect) Type() pbx.MessageType {
-	return pbx.MessageType_CONNECT
+func (c *Connect) Type() MessageType {
+	return MessageType(pbx.MessageType_CONNECT)
 }
 
 // String returns the name of operation.
@@ -52,8 +52,8 @@ func (c *Connack) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (c *Connack) Type() pbx.MessageType {
-	return pbx.MessageType_CONNACK
+func (c *Connack) Type() MessageType {
+	return MessageType(pbx.MessageType_CONNACK)
 }
 
 // String returns the name of operation.
@@ -76,8 +76,8 @@ func (p *Pingreq) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (p *Pingreq) Type() pbx.MessageType {
-	return pbx.MessageType_PINGREQ
+func (p *Pingreq) Type() MessageType {
+	return MessageType(pbx.MessageType_PINGREQ)
 }
 
 // String returns the name of operation.
@@ -99,8 +99,8 @@ func (p *Pingresp) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (p *Pingresp) Type() pbx.MessageType {
-	return pbx.MessageType_PINGRESP
+func (p *Pingresp) Type() MessageType {
+	return MessageType(pbx.MessageType_PINGRESP)
 }
 
 // String returns the name of operation.
@@ -122,8 +122,8 @@ func (d *Disconnect) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (d *Disconnect) Type() pbx.MessageType {
-	return pbx.MessageType_DISCONNECT
+func (d *Disconnect) Type() MessageType {
+	return MessageType(pbx.MessageType_DISCONNECT)
 }
 
 // String returns the name of operation.

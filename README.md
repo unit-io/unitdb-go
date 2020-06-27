@@ -1,6 +1,6 @@
-# unitd [![GoDoc](https://godoc.org/github.com/unit-io/unitd-go?status.svg)](https://godoc.org/github.com/unit-io/unitd-go) [![Go Report Card](https://goreportcard.com/badge/github.com/unit-io/unitd-go)](https://goreportcard.com/report/github.com/unit-io/unitd-go) [![Coverage Status](https://coveralls.io/repos/github/unit-io/unitd-go/badge.svg?branch=master)](https://coveralls.io/github/unit-io/unitd-go?branch=master)
+# unitd [![GoDoc](https://godoc.org/github.com/unit-io/unitd-go?status.svg)](https://godoc.org/github.com/unit-io/unitd-go)
 
-## unitd is an open source messaging broker for IoT and other real-time messaging service. Unitd messaging API is built for speed and security.
+## Unitd is an open source messaging broker for IoT and other real-time messaging service. Unitd messaging API is built for speed and security.
 
 Unitd is a real-time messaging service for IoT connected devices, it is based on MQTT protocol. Unitd is blazing fast and secure messaging infrastructure and APIs for IoT, gaming, apps and real-time web.
 
@@ -20,6 +20,7 @@ Detailed API documentation is available using the [godoc.org](https://godoc.org/
 Make use of the client by importing it in your Go client source code. For example,
 
 import "github.com/unit-io/unitd-go"
+
 Samples are available in the cmd directory for reference.
 
 Note:

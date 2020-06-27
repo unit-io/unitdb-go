@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -26,26 +27,30 @@ func main() {
 	if err != nil {
 		log.Fatalf("err: %s", err)
 	}
-	err = client.Connect()
+	ctx := context.Background()
+	err = client.ConnectContext(ctx)
 	if err != nil {
 		log.Fatalf("err: %s", err)
 	}
 
-	if err := client.Subscribe([]byte("teams.alpha.user1")); err != nil {
+	r := client.Subscribe([]byte("teams.alpha.user1"))
+	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
 	for i := 0; i < 5; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		if err := client.Publish([]byte("teams.alpha.user1"), []byte(msg)); err != nil {
+		r := client.Publish([]byte("teams.alpha.user1"), []byte(msg))
+		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
 	}
 
-	wait := time.NewTicker(3 * time.Second)
+	wait := time.NewTicker(1 * time.Second)
 	<-wait.C
-	if err := client.Unsubscribe([]byte("teams.alpha.user1")); err != nil {
+	r = client.Unsubscribe([]byte("teams.alpha.user1"))
+	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}

@@ -29,8 +29,8 @@ func (p *Publish) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the packet type.
-func (p *Publish) Type() pbx.MessageType {
-	return pbx.MessageType_PUBLISH
+func (p *Publish) Type() MessageType {
+	return MessageType(pbx.MessageType_PUBLISH)
 }
 
 // String returns the name of operation.
@@ -52,8 +52,8 @@ func (p *Puback) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (p *Puback) Type() pbx.MessageType {
-	return pbx.MessageType_PUBACK
+func (p *Puback) Type() MessageType {
+	return MessageType(pbx.MessageType_PUBACK)
 }
 
 // String returns the name of operation.
@@ -75,8 +75,8 @@ func (p *Pubrec) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (p *Pubrec) Type() pbx.MessageType {
-	return pbx.MessageType_PUBREC
+func (p *Pubrec) Type() MessageType {
+	return MessageType(pbx.MessageType_PUBREC)
 }
 
 // String returns the name of operation.
@@ -98,8 +98,8 @@ func (p *Pubrel) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (p *Pubrel) Type() pbx.MessageType {
-	return pbx.MessageType_PUBREL
+func (p *Pubrel) Type() MessageType {
+	return MessageType(pbx.MessageType_PUBREL)
 }
 
 // String returns the name of operation.
@@ -121,8 +121,8 @@ func (p *Pubcomp) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (p *Pubcomp) Type() pbx.MessageType {
-	return pbx.MessageType_PUBCOMP
+func (p *Pubcomp) Type() MessageType {
+	return MessageType(pbx.MessageType_PUBCOMP)
 }
 
 // String returns the name of operation.

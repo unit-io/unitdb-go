@@ -29,8 +29,8 @@ func (s *Subscribe) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (s *Subscribe) Type() pbx.MessageType {
-	return pbx.MessageType_SUBSCRIBE
+func (s *Subscribe) Type() MessageType {
+	return MessageType(pbx.MessageType_SUBSCRIBE)
 }
 
 // String returns the name of operation.
@@ -52,8 +52,8 @@ func (s *Suback) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (s *Suback) Type() pbx.MessageType {
-	return pbx.MessageType_SUBACK
+func (s *Suback) Type() MessageType {
+	return MessageType(pbx.MessageType_SUBACK)
 }
 
 // String returns the name of operation.
@@ -75,8 +75,8 @@ func (u *Unsubscribe) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (u *Unsubscribe) Type() pbx.MessageType {
-	return pbx.MessageType_UNSUBSCRIBE
+func (u *Unsubscribe) Type() MessageType {
+	return MessageType(pbx.MessageType_UNSUBSCRIBE)
 }
 
 // String returns the name of operation.
@@ -98,8 +98,8 @@ func (u *Unsuback) WriteTo(w io.Writer) (int64, error) {
 }
 
 // Type returns the Packet type.
-func (u *Unsuback) Type() pbx.MessageType {
-	return pbx.MessageType_UNSUBACK
+func (u *Unsuback) Type() MessageType {
+	return MessageType(pbx.MessageType_UNSUBACK)
 }
 
 // String returns the name of operation.

@@ -93,7 +93,7 @@ func WithDefaultOptions() Options {
 		o.KeepAlive = 60
 		o.PingTimeout = 30 * time.Second
 		o.ConnectTimeout = 30 * time.Second
-		o.WriteTimeout = 0 // 0 represents timeout disabled
+		o.WriteTimeout = 10 // 0 represents timeout disabled
 		// o.ResumeSubs = false
 	})
 }
@@ -175,7 +175,7 @@ func WithPingTimeout(k time.Duration) Options {
 	})
 }
 
-// WithWriteTimeout puts a limit on how long a mqtt publish should block until it unblocks with a
+// WithWriteTimeout puts a limit on how long a publish should block until it unblocks with a
 // timeout error. A duration of 0 never times out. Default never times out
 func WithWriteTimeout(t time.Duration) Options {
 	return newFuncOption(func(o *options) {
@@ -216,6 +216,45 @@ func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 }
 
 // -------------------------------------------------------------
+type pubOptions struct {
+	Qos      uint32
+	Retained bool
+}
+
+// SubOptions it contains configurable options for Subscribe
+type PubOptions interface {
+	set(*pubOptions)
+}
+
+// fSubOption wraps a function that modifies options into an
+// implementation of the SubOption interface.
+type fPubOption struct {
+	f func(*pubOptions)
+}
+
+func (fo *fPubOption) set(o *pubOptions) {
+	fo.f(o)
+}
+
+func newFuncPubOption(f func(*pubOptions)) *fPubOption {
+	return &fPubOption{
+		f: f,
+	}
+}
+
+func WithPubQos(qos uint32) PubOptions {
+	return newFuncPubOption(func(o *pubOptions) {
+		o.Qos = qos
+	})
+}
+
+func WithRetained() PubOptions {
+	return newFuncPubOption(func(o *pubOptions) {
+		o.Retained = true
+	})
+}
+
+// -------------------------------------------------------------
 type subOptions struct {
 	Qos      uint32
 	Callback MessageHandler
@@ -240,6 +279,12 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 	return &fSubOption{
 		f: f,
 	}
+}
+
+func WithSubQos(qos uint32) SubOptions {
+	return newFuncSubOption(func(o *subOptions) {
+		o.Qos = qos
+	})
 }
 
 // WithCallback sets handler function to be called

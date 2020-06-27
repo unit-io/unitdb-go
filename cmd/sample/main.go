@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -78,7 +79,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		err = client.Connect()
+		ctx := context.Background()
+		err = client.ConnectContext(ctx)
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -99,7 +101,7 @@ func main() {
 		}
 		for {
 			select {
-			case <-client.Context().Done():
+			case <-ctx.Done():
 				client.Disconnect()
 				fmt.Println("Subscriber Disconnected")
 				return
@@ -156,7 +158,8 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		err = client.Connect()
+		ctx := context.Background()
+		err = client.ConnectContext(ctx)
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -167,7 +170,7 @@ func main() {
 
 		for {
 			select {
-			case <-client.Context().Done():
+			case <-ctx.Done():
 				client.Disconnect()
 				fmt.Println("Subscriber Disconnected")
 				return

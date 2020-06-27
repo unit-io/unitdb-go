@@ -2,6 +2,7 @@ package unitd
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -9,47 +10,48 @@ import (
 
 	"github.com/unit-io/unitd-go/packets"
 	"github.com/unit-io/unitd/pkg/log"
-	pbx "github.com/unit-io/unitd/proto"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Packet
-func Connect(conn net.Conn, cm *packets.Connect) (uint32, bool) {
+func Connect(conn net.Conn, cm *packets.Connect) (uint32, uint32, bool) {
 	if _, err := cm.WriteTo(conn); err != nil {
 		fmt.Println(err)
 	}
 
-	rc, sessionPresent := verifyCONNACK(conn)
-	return rc, sessionPresent
+	rc, cid, sessionPresent := verifyCONNACK(conn)
+	return rc, cid, sessionPresent
 }
 
 // This function is only used for receiving a connack
 // when the connection is first started.
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
-func verifyCONNACK(conn net.Conn) (uint32, bool) {
+func verifyCONNACK(conn net.Conn) (uint32, uint32, bool) {
 	ca, err := packets.ReadPacket(conn)
 	if err != nil {
-		return packets.ErrNetworkError, false
+		return packets.ErrNetworkError, packets.ErrNetworkError, false
 	}
 	if ca == nil {
-		return packets.ErrNetworkError, false
+		return packets.ErrNetworkError, packets.ErrNetworkError, false
 	}
 
 	msg, ok := ca.(*packets.Connack)
 	if !ok {
-		return packets.ErrNetworkError, false
+		return packets.ErrNetworkError, packets.ErrNetworkError, false
 	}
 
-	return msg.ReturnCode, true
+	return msg.ReturnCode, msg.ConnID, true
 }
 
-// Handle handles incoming request to the client
+// Handle handles incoming messages
 func (cc *clientConn) readLoop() error {
+	cc.closeW.Add(1)
 	defer func() {
 		log.Info("conn.Handler", "closing...")
 		cc.close()
+		cc.closeW.Done()
 	}()
 
 	reader := bufio.NewReaderSize(cc.conn, 65536)
@@ -64,108 +66,107 @@ func (cc *clientConn) readLoop() error {
 			return err
 		}
 
-		// Mqtt message handler
+		// persist incoming
+
+		// Message handler
 		if err := cc.handler(pkt); err != nil {
 			return err
 		}
 	}
 }
 
-// handle handles receive.
+// handle handles inbound messages.
 func (cc *clientConn) handler(pkt packets.Packet) error {
 	cc.updateLastAction()
 
-	switch pkt.Type() {
-	// An attempt to connect.
-	case pbx.MessageType_PINGRESP:
+	switch m := pkt.(type) {
+	case *packets.Pingresp:
 		cc.updateLastTouched()
-		// An attempt to subscribe to a topic.
-		return nil
-	case pbx.MessageType_SUBACK:
-		return nil
-	// An attempt to unsubscribe from a topic.
-	case pbx.MessageType_UNSUBACK:
-		return nil
-	// Ping response, respond appropriately.
-	case pbx.MessageType_PUBLISH:
+	case *packets.Suback:
+		mId := cc.inboundID(m.MessageID)
+		cc.getType(mId).flowComplete()
+		cc.freeID(mId)
+	case *packets.Unsuback:
+		mId := cc.inboundID(m.MessageID)
+		cc.getType(mId).flowComplete()
+		cc.freeID(mId)
+	case *packets.Publish:
+		// mId := cc.inboundID(m.MessageID)
+		// cc.freeID(mId)
 		cc.recv <- pkt.(*packets.Publish)
-		return nil
-	case pbx.MessageType_PUBACK:
-		return nil
-	case pbx.MessageType_PUBREC:
-		return nil
-	case pbx.MessageType_PUBREL:
-		return nil
-	case pbx.MessageType_PUBCOMP:
-		return nil
+	case *packets.Puback:
+		mId := cc.inboundID(m.MessageID)
+		cc.getType(mId).flowComplete()
+		cc.freeID(mId)
+	case *packets.Pubrec:
+		p := packets.Packet(&packets.Pubrel{MessageID: m.MessageID})
+		cc.send <- &PacketAndResult{p: p}
+	case *packets.Pubrel:
+		p := packets.Packet(&packets.Pubcomp{MessageID: m.MessageID})
+		cc.send <- &PacketAndResult{p: p}
+	case *packets.Pubcomp:
+		mId := cc.inboundID(m.MessageID)
+		cc.getType(mId).flowComplete()
+		cc.freeID(mId)
 	}
 
 	return nil
 }
 
-// sendMessage forwards the message to the underlying client.
-func (cc *clientConn) sendMessage(m pbx.Publish) error {
-	packet := packets.Publish{
-		MessageID: 0,         // TODO
-		Topic:     m.Topic,   // The topic for this message.
-		Payload:   m.Payload, // The payload for this message.
-	}
-
-	// Acknowledge the publication
-	if _, err := packet.WriteTo(cc.conn); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// Send forwards raw bytes to the underlying client.
-func (cc *clientConn) sendRawBytes(buf []byte) bool {
-	if cc.conn == nil {
-		return true
-	}
-
-	select {
-	case cc.send <- buf:
-	case <-time.After(time.Millisecond * 5):
-		return false
-	}
-
-	return true
-}
-
-func (cc *clientConn) writeLoop() {
+func (cc *clientConn) writeLoop(ctx context.Context) {
 	cc.closeW.Add(1)
 	defer cc.closeW.Done()
 
 	for {
 		select {
-		case <-cc.closeC:
+		case <-ctx.Done():
 			return
+		// case <-cc.closeC:
+		// 	return
 		case msg, ok := <-cc.send:
 			if !ok {
 				// Channel closed.
 				return
 			}
-			cc.conn.Write(msg)
+			switch m := msg.p.(type) {
+			case *packets.Publish:
+				if m.Qos == 0 {
+					msg.r.(*PublishResult).flowComplete()
+					mId := cc.inboundID(m.MessageID)
+					// cc.getType(mId).flowComplete()
+					cc.freeID(mId)
+				}
+			case *packets.Puback:
+				// persist outbound
+			case *packets.Pubrel:
+				// persist outbound
+			case *packets.Disconnect:
+				msg.r.(*DisconnectResult).flowComplete()
+				mId := cc.inboundID(m.MessageID)
+				// cc.getType(mId).flowComplete()
+				cc.freeID(mId)
+			}
+			msg.p.WriteTo(cc.conn)
 		}
 	}
 }
 
-func (cc *clientConn) dispatcher() {
+func (cc *clientConn) dispatcher(ctx context.Context) {
 	cc.closeW.Add(1)
 	defer cc.closeW.Done()
 
 	for {
 		select {
-		case <-cc.closeC:
+		case <-ctx.Done():
 			return
+		// case <-cc.closeC:
+		// 	return
 		case msg, ok := <-cc.recv:
 			if !ok {
 				// Channel closed.
 				return
 			}
-			m := messageFromPublish(msg)
+			m := messageFromPublish(msg, ack(cc, msg))
 			// dispatch message to default callback function
 			handler := cc.callbacks[0]
 			handler(cc, m)
@@ -175,7 +176,7 @@ func (cc *clientConn) dispatcher() {
 
 // keepalive - Send ping when connection unused for set period
 // connection passed in to avoid race condition on shutdown
-func (cc *clientConn) keepalive() {
+func (cc *clientConn) keepalive(ctx context.Context) {
 	cc.closeW.Add(1)
 	defer cc.closeW.Done()
 
@@ -193,8 +194,10 @@ func (cc *clientConn) keepalive() {
 
 	for {
 		select {
-		case <-cc.closeC:
+		case <-ctx.Done():
 			return
+		// case <-cc.closeC:
+		// 	return
 		case <-pingTicker.C:
 			lastAction := cc.lastAction.Load().(time.Time)
 			lastTouched := cc.lastTouched.Load().(time.Time)
@@ -213,6 +216,22 @@ func (cc *clientConn) keepalive() {
 				go cc.internalConnLost(errors.New("pingresp not received, disconnecting")) // no harm in calling this if the connection is already down (better than stopping!)
 				return
 			}
+		}
+	}
+}
+
+// ack acknowledges a packet
+func ack(cc *clientConn, packet *packets.Publish) func() {
+	return func() {
+		switch packet.Qos {
+		case 2:
+			p := packets.Packet(&packets.Pubrec{MessageID: packet.MessageID})
+			cc.send <- &PacketAndResult{p: p}
+		case 1:
+			p := packets.Packet(&packets.Puback{MessageID: packet.MessageID})
+			cc.send <- &PacketAndResult{p: p}
+		case 0:
+			// do nothing, since there is no need to send an ack packet back
 		}
 	}
 }

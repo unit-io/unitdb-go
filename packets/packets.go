@@ -26,10 +26,11 @@ const (
 type Packet interface {
 	fmt.Stringer
 
-	Type() pbx.MessageType
+	Type() MessageType
 	WriteTo(io.Writer) (int64, error)
 }
 
+type MessageType pbx.MessageType
 type FixedHeader pbx.FixedHeader
 
 // DecodePacket unpacks the packet from the provided reader.

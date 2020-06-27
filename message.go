@@ -2,6 +2,7 @@ package unitd
 
 import (
 	"net/url"
+	"sync"
 
 	"github.com/unit-io/unitd-go/packets"
 )
@@ -13,6 +14,7 @@ type Message interface {
 	Topic() []byte
 	MessageID() uint32
 	Payload() []byte
+	Ack()
 }
 
 type message struct {
@@ -22,6 +24,8 @@ type message struct {
 	topic     []byte
 	messageID uint32
 	payload   []byte
+	once      sync.Once
+	ack       func()
 }
 
 func (m *message) Duplicate() bool {
@@ -48,11 +52,16 @@ func (m *message) Payload() []byte {
 	return m.payload
 }
 
-func messageFromPublish(p *packets.Publish) Message {
+func (m *message) Ack() {
+	m.once.Do(m.ack)
+}
+
+func messageFromPublish(p *packets.Publish, ack func()) Message {
 	return &message{
 		topic:     p.Topic,
 		messageID: p.MessageID,
 		payload:   p.Payload,
+		ack:       ack,
 	}
 }
 
