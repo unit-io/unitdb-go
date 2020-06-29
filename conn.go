@@ -12,9 +12,19 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/unit-io/unitd-go/packets"
+	"github.com/unit-io/unitd-go/store"
 	plugins "github.com/unit-io/unitd/plugins/grpc"
 	pbx "github.com/unit-io/unitd/proto"
 	"google.golang.org/grpc"
+
+	// Database store
+	_ "github.com/unit-io/unitd-go/db/unitdb"
+)
+
+// Various constant parts of the Client Connection.
+const (
+	// MasterContract contract is default contract used for topics if client program does not specify Contract in the request
+	MasterContract = uint32(3376684800)
 )
 
 type ClientConn interface {
@@ -41,9 +51,10 @@ type clientConn struct {
 	mu         sync.Mutex // mutex for the connection
 	opts       *options
 	cancel     context.CancelFunc // cancellation function
-	messageIds                    // local identifier of messages
-	connID     uint32             // Theunique id of the connection.
-	conn       net.Conn           // the network connection
+	contract   uint32
+	messageIds          // local identifier of messages
+	connID     uint32   // Theunique id of the connection.
+	conn       net.Conn // the network connection
 	stream     grpc.Stream
 	send       chan *PacketAndResult
 	recv       chan *packets.Publish
@@ -62,6 +73,7 @@ type clientConn struct {
 func NewClient(target string, clientID string, opts ...Options) (ClientConn, error) {
 	cc := &clientConn{
 		opts:       new(options),
+		contract:   MasterContract,
 		messageIds: messageIds{index: make(map[MID]Result)},
 		send:       make(chan *PacketAndResult, 1), // buffered
 		recv:       make(chan *packets.Publish),
@@ -77,6 +89,11 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 	cc.opts.addServer(target)
 	cc.opts.setClientID(clientID)
 	cc.callbacks[0] = cc.opts.DefaultMessageHandler
+
+	// Open database connection
+	if err := store.Open(cc.opts.StoreDir); err != nil {
+		return cc, err
+	}
 	return cc, nil
 }
 
@@ -109,7 +126,7 @@ func (cc *clientConn) close() error {
 	cc.closeW.Wait()
 	close(cc.send)
 	close(cc.recv)
-
+	store.Close()
 	return nil
 }
 
@@ -333,6 +350,20 @@ func (cc *clientConn) updateLastAction() {
 
 func (cc *clientConn) updateLastTouched() {
 	cc.lastTouched.Store(TimeNow())
+}
+
+func keyFromMID(contract, messageID uint32) uint64 {
+	return uint64(contract)<<32 + uint64(messageID)
+}
+
+func (cc *clientConn) storeInbound(m packets.Packet) {
+	k := uint64(cc.contract)<<32 + uint64(m.Info().MessageID)
+	store.Message.PersistInbound(k, m)
+}
+
+func (cc *clientConn) storeOutbound(m packets.Packet) {
+	k := uint64(cc.contract)<<32 + uint64(m.Info().MessageID)
+	store.Message.PersistOutbound(k, m)
 }
 
 // Set closed flag; return true if not already closed.

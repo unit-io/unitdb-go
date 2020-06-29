@@ -27,11 +27,19 @@ type Packet interface {
 	fmt.Stringer
 
 	Type() MessageType
+	Encode() []byte
 	WriteTo(io.Writer) (int64, error)
+	Info() Info
 }
 
 type MessageType pbx.MessageType
 type FixedHeader pbx.FixedHeader
+
+// Info returns Qos and MessageID by the Info() function called on the Packet
+type Info struct {
+	Qos       uint32
+	MessageID uint32
+}
 
 // DecodePacket unpacks the packet from the provided reader.
 func ReadPacket(r io.Reader) (Packet, error) {

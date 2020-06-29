@@ -61,25 +61,26 @@ func (cc *clientConn) readLoop() error {
 		cc.conn.SetDeadline(time.Now().Add(time.Second * 120))
 
 		// Decode an incoming packet
-		pkt, err := packets.ReadPacket(reader)
+		msg, err := packets.ReadPacket(reader)
 		if err != nil {
 			return err
 		}
 
-		// persist incoming
+		// Persist incoming
+		cc.storeInbound(msg)
 
 		// Message handler
-		if err := cc.handler(pkt); err != nil {
+		if err := cc.handler(msg); err != nil {
 			return err
 		}
 	}
 }
 
 // handle handles inbound messages.
-func (cc *clientConn) handler(pkt packets.Packet) error {
+func (cc *clientConn) handler(msg packets.Packet) error {
 	cc.updateLastAction()
 
-	switch m := pkt.(type) {
+	switch m := msg.(type) {
 	case *packets.Pingresp:
 		cc.updateLastTouched()
 	case *packets.Suback:
@@ -91,9 +92,7 @@ func (cc *clientConn) handler(pkt packets.Packet) error {
 		cc.getType(mId).flowComplete()
 		cc.freeID(mId)
 	case *packets.Publish:
-		// mId := cc.inboundID(m.MessageID)
-		// cc.freeID(mId)
-		cc.recv <- pkt.(*packets.Publish)
+		cc.recv <- msg.(*packets.Publish)
 	case *packets.Puback:
 		mId := cc.inboundID(m.MessageID)
 		cc.getType(mId).flowComplete()
@@ -121,8 +120,6 @@ func (cc *clientConn) writeLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		// case <-cc.closeC:
-		// 	return
 		case msg, ok := <-cc.send:
 			if !ok {
 				// Channel closed.
@@ -133,17 +130,17 @@ func (cc *clientConn) writeLoop(ctx context.Context) {
 				if m.Qos == 0 {
 					msg.r.(*PublishResult).flowComplete()
 					mId := cc.inboundID(m.MessageID)
-					// cc.getType(mId).flowComplete()
 					cc.freeID(mId)
 				}
 			case *packets.Puback:
 				// persist outbound
+				cc.storeOutbound(m)
 			case *packets.Pubrel:
 				// persist outbound
+				cc.storeOutbound(m)
 			case *packets.Disconnect:
 				msg.r.(*DisconnectResult).flowComplete()
 				mId := cc.inboundID(m.MessageID)
-				// cc.getType(mId).flowComplete()
 				cc.freeID(mId)
 			}
 			msg.p.WriteTo(cc.conn)
@@ -159,8 +156,6 @@ func (cc *clientConn) dispatcher(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		// case <-cc.closeC:
-		// 	return
 		case msg, ok := <-cc.recv:
 			if !ok {
 				// Channel closed.

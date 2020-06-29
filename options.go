@@ -31,6 +31,7 @@ type options struct {
 	KeepAlive             int64
 	PingTimeout           time.Duration
 	ConnectTimeout        time.Duration
+	StoreDir              string
 	DefaultMessageHandler MessageHandler
 	ConnectionHandler     ConnectionHandler
 	ConnectionLostHandler ConnectionLostHandler
@@ -93,7 +94,8 @@ func WithDefaultOptions() Options {
 		o.KeepAlive = 60
 		o.PingTimeout = 30 * time.Second
 		o.ConnectTimeout = 30 * time.Second
-		o.WriteTimeout = 10 // 0 represents timeout disabled
+		o.WriteTimeout = 10 * time.Second // 0 represents timeout disabled
+		o.StoreDir = "/tmp/unitdb"
 		// o.ResumeSubs = false
 	})
 }
@@ -192,8 +194,15 @@ func WithConnectTimeout(t time.Duration) Options {
 	})
 }
 
+// WithStoreDir sets database directory.
+func WithStoreDir(path string) Options {
+	return newFuncOption(func(o *options) {
+		o.StoreDir = path
+	})
+}
+
 // WithDefaultMessageHandler set default message handler to be called
-// on message receive to all topics client has subcribed to.
+// on message receive to all topics client has subscribed to.
 func WithDefaultMessageHandler(defaultHandler MessageHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.DefaultMessageHandler = defaultHandler
