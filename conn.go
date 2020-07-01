@@ -57,7 +57,8 @@ type clientConn struct {
 	conn       net.Conn // the network connection
 	stream     grpc.Stream
 	send       chan *PacketAndResult
-	recv       chan *packets.Publish
+	recv       chan packets.Packet
+	pub        chan *packets.Publish
 	callbacks  map[uint64]MessageHandler
 
 	// Time when the keepalive session was last refreshed
@@ -76,7 +77,8 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 		contract:   MasterContract,
 		messageIds: messageIds{index: make(map[MID]Result)},
 		send:       make(chan *PacketAndResult, 1), // buffered
-		recv:       make(chan *packets.Publish),
+		recv:       make(chan packets.Packet),
+		pub:        make(chan *packets.Publish),
 		callbacks:  make(map[uint64]MessageHandler),
 		// Close
 		// closeC: make(chan struct{}),
@@ -91,9 +93,15 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 	cc.callbacks[0] = cc.opts.DefaultMessageHandler
 
 	// Open database connection
-	if err := store.Open(cc.opts.StoreDir); err != nil {
-		return cc, err
+	if err := store.Open(cc.opts.StorePath); err != nil {
+		return nil, err
 	}
+
+	// Init message store and recover pending messages from log file if reset is set false
+	if err := store.InitDb(cc.opts.StorePath, int64(cc.opts.StoreSize), cc.opts.StoreLogReleaseDuration, false); err != nil {
+		return nil, err
+	}
+
 	return cc, nil
 }
 
@@ -126,6 +134,7 @@ func (cc *clientConn) close() error {
 	cc.closeW.Wait()
 	close(cc.send)
 	close(cc.recv)
+	close(cc.pub)
 	store.Close()
 	return nil
 }
@@ -152,6 +161,13 @@ func (cc *clientConn) ConnectContext(ctx context.Context) error {
 		return err
 	}
 
+	// Take care of any messages in the store
+	if !cc.opts.CleanSession {
+		cc.resume(cc.opts.ResumeSubs)
+	} else {
+		// contract is used as blockId and key prefix
+		store.Message.Reset(cc.contract)
+	}
 	if cc.opts.KeepAlive != 0 {
 		cc.updateLastAction()
 		cc.updateLastTouched()
@@ -329,17 +345,73 @@ func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
 	return r
 }
 
+// Load all stored messages and resend them to ensure QOS > 1,2 even after an application crash.
+func (cc *clientConn) resume(subscription bool) {
+	// contract is used as blockId and key prefix
+	keys := store.Message.Keys(cc.contract)
+	for _, k := range keys {
+		msg := store.Message.Get(k)
+		if msg == nil {
+			continue
+		}
+		info := msg.Info()
+		// isKeyOutbound
+		if (k & (1 << 4)) == 0 {
+			switch msg.(type) {
+			case *packets.Subscribe:
+				if subscription {
+					p := msg.(*packets.Subscribe)
+					r := &SubscribeResult{result: result{complete: make(chan struct{})}}
+					r.messageID = info.MessageID
+					var topics []TopicQOSTuple
+					for _, sub := range p.Subscribers {
+						var t TopicQOSTuple
+						t.Topic = sub.Topic
+						t.Qos = uint8(sub.Qos)
+						topics = append(topics, t)
+					}
+					r.subs = append(r.subs, topics...)
+					//cc.claimID(token, details.MessageID)
+					cc.send <- &PacketAndResult{p: msg, r: r}
+				}
+			case *packets.Unsubscribe:
+				if subscription {
+					r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
+					cc.send <- &PacketAndResult{p: msg, r: r}
+				}
+
+			case *packets.Pubrel:
+				cc.send <- &PacketAndResult{p: msg, r: nil}
+			case *packets.Publish:
+				r := &PublishResult{result: result{complete: make(chan struct{})}}
+				r.messageID = info.MessageID
+				// cc.claimID(token, details.MessageID)
+				cc.send <- &PacketAndResult{p: msg, r: r}
+			default:
+				store.Message.Delete(k)
+			}
+		} else {
+			switch msg.(type) {
+			case *packets.Pubrel:
+				cc.recv <- msg
+			default:
+				store.Message.Delete(k)
+			}
+		}
+	}
+}
+
 // TimeNow returns current wall time in UTC rounded to milliseconds.
 func TimeNow() time.Time {
 	return time.Now().UTC().Round(time.Millisecond)
 }
 
 func (cc *clientConn) inboundID(id uint32) MID {
-	return MID(cc.connID - id)
+	return MID(cc.connID - ((id << 4) | uint32(1)))
 }
 
-func (cc *clientConn) outboundID(id MID) uint32 {
-	return cc.connID - uint32(id)
+func (cc *clientConn) outboundID(mid MID) (id uint32) {
+	return cc.connID - ((uint32(mid) << 4) | uint32(0))
 }
 
 func (cc *clientConn) updateLastAction() {
@@ -352,12 +424,8 @@ func (cc *clientConn) updateLastTouched() {
 	cc.lastTouched.Store(TimeNow())
 }
 
-func keyFromMID(contract, messageID uint32) uint64 {
-	return uint64(contract)<<32 + uint64(messageID)
-}
-
 func (cc *clientConn) storeInbound(m packets.Packet) {
-	k := uint64(cc.contract)<<32 + uint64(m.Info().MessageID)
+	k := uint64(cc.contract)<<32 + uint64(cc.inboundID(m.Info().MessageID))
 	store.Message.PersistInbound(k, m)
 }
 

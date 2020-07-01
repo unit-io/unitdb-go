@@ -41,7 +41,7 @@ type Info struct {
 	MessageID uint32
 }
 
-// DecodePacket unpacks the packet from the provided reader.
+// ReadPacket unpacks the packet from the provided reader.
 func ReadPacket(r io.Reader) (Packet, error) {
 	var fh FixedHeader
 	fh.unpack(r)

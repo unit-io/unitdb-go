@@ -109,11 +109,18 @@ func (r *PublishResult) MessageID() uint32 {
 	return r.messageID
 }
 
+//TopicQOSTuple is a struct for pairing the Qos and topic together
+//for the QOS' pairs in unsubscribe and subscribe
+type TopicQOSTuple struct {
+	Qos   uint8
+	Topic []byte
+}
+
 // SubscribeResult is an extension of result containing the extra fields
 // required to provide information about calls to Subscribe()
 type SubscribeResult struct {
 	result
-	subs      []string
+	subs      []TopicQOSTuple
 	subResult map[string]byte
 	messageID uint32
 }

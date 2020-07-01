@@ -21,21 +21,24 @@ type ConnectionHandler func(ClientConn)
 type ConnectionLostHandler func(ClientConn, error)
 
 type options struct {
-	Servers               []*url.URL
-	ClientID              string
-	InsecureFlag          bool
-	Username              string
-	Password              string
-	CleanSession          bool
-	TLSConfig             *tls.Config
-	KeepAlive             int64
-	PingTimeout           time.Duration
-	ConnectTimeout        time.Duration
-	StoreDir              string
-	DefaultMessageHandler MessageHandler
-	ConnectionHandler     ConnectionHandler
-	ConnectionLostHandler ConnectionLostHandler
-	WriteTimeout          time.Duration
+	Servers                 []*url.URL
+	ClientID                string
+	InsecureFlag            bool
+	Username                string
+	Password                string
+	CleanSession            bool
+	TLSConfig               *tls.Config
+	KeepAlive               int64
+	PingTimeout             time.Duration
+	ConnectTimeout          time.Duration
+	StorePath               string
+	StoreSize               int
+	StoreLogReleaseDuration time.Duration
+	DefaultMessageHandler   MessageHandler
+	ConnectionHandler       ConnectionHandler
+	ConnectionLostHandler   ConnectionLostHandler
+	WriteTimeout            time.Duration
+	ResumeSubs              bool
 }
 
 func (o *options) addServer(target string) {
@@ -95,8 +98,14 @@ func WithDefaultOptions() Options {
 		o.PingTimeout = 30 * time.Second
 		o.ConnectTimeout = 30 * time.Second
 		o.WriteTimeout = 10 * time.Second // 0 represents timeout disabled
-		o.StoreDir = "/tmp/unitdb"
-		// o.ResumeSubs = false
+		o.StorePath = "/tmp/unitdb"
+		o.StoreSize = 1 << 27
+		if o.WriteTimeout > 0 {
+			o.StoreLogReleaseDuration = o.WriteTimeout
+		} else {
+			o.StoreLogReleaseDuration = 1 * time.Minute // must be greater than WriteTimeout
+		}
+		o.ResumeSubs = false
 	})
 }
 
@@ -195,9 +204,25 @@ func WithConnectTimeout(t time.Duration) Options {
 }
 
 // WithStoreDir sets database directory.
-func WithStoreDir(path string) Options {
+func WithStorePath(path string) Options {
 	return newFuncOption(func(o *options) {
-		o.StoreDir = path
+		o.StorePath = path
+	})
+}
+
+// WithStoreSize sets buffer size store will use to write messages into log.
+func WithStoreSize(size int) Options {
+	return newFuncOption(func(o *options) {
+		o.StoreSize = size
+	})
+}
+
+// WithStoreLogReleaseDuration sets log release duration, it must be greater than WriteTimeout.
+func WithStoreLogReleaseDuration(dur time.Duration) Options {
+	return newFuncOption(func(o *options) {
+		if dur > o.WriteTimeout {
+			o.StoreLogReleaseDuration = dur
+		}
 	})
 }
 
@@ -221,6 +246,14 @@ func WithConnectionHandler(handler ConnectionHandler) Options {
 func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.ConnectionLostHandler = handler
+	})
+}
+
+// WithResumeSubs will enable resuming stored subscribe/unsubscribe messages
+// when connecting but not reconnecting if CleanSession is false.
+func WithResumeSubs() Options {
+	return newFuncOption(func(o *options) {
+		o.ResumeSubs = true
 	})
 }
 

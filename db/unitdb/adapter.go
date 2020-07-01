@@ -1,12 +1,14 @@
 package adapter
 
 import (
+	"encoding/binary"
 	"errors"
-	"math/rand"
+	"io"
 	"os"
 
 	"github.com/unit-io/unitd-go/store"
 	"github.com/unit-io/unitdb/memdb"
+	"github.com/unit-io/unitdb/wal"
 )
 
 const (
@@ -15,6 +17,7 @@ const (
 	dbVersion = 1.0
 
 	adapterName = "unitdb"
+	logPostfix  = ".log"
 )
 
 const (
@@ -26,9 +29,13 @@ const (
 
 // adapter represents an SSD-optimized store.
 type adapter struct {
-	cacheID uint64
-	db      *memdb.DB // The underlying database to store messages.
-	version int
+	db        *memdb.DB // The underlying database to store messages.
+	logWriter *wal.Writer
+	wal       *wal.WAL
+	version   int
+
+	// close
+	closer io.Closer
 }
 
 // Open initializes database connection
@@ -48,8 +55,6 @@ func (a *adapter) Open(path string) error {
 	if err != nil {
 		return err
 	}
-	// memdb blockcache id
-	a.cacheID = uint64(rand.Uint32())<<32 + uint64(rand.Uint32())
 	return nil
 }
 
@@ -60,6 +65,14 @@ func (a *adapter) Close() error {
 		err = a.db.Close()
 		a.db = nil
 		a.version = -1
+
+		var err error
+		if a.closer != nil {
+			if err1 := a.closer.Close(); err == nil {
+				err = err1
+			}
+			a.closer = nil
+		}
 	}
 	return err
 }
@@ -76,19 +89,15 @@ func (a *adapter) GetName() string {
 }
 
 // Put appends the messages to the store.
-func (a *adapter) Put(key uint64, payload []byte) error {
-	blockId := a.cacheID ^ key
+func (a *adapter) Put(blockId, key uint64, payload []byte) error {
 	if err := a.db.Set(blockId, key, payload); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Get performs a query and attempts to fetch last n messages where
-// n is specified by limit argument. From and until times can also be specified
-// for time-series retrieval.
-func (a *adapter) Get(key uint64) (matches []byte, err error) {
-	blockId := a.cacheID ^ key
+// Get performs a query and attempts to fetch message for the given blockId and key
+func (a *adapter) Get(blockId, key uint64) (matches []byte, err error) {
 	matches, err = a.db.Get(blockId, key)
 	if err != nil {
 		return nil, err
@@ -96,13 +105,96 @@ func (a *adapter) Get(key uint64) (matches []byte, err error) {
 	return matches, nil
 }
 
+// Keys performs a query and attempts to fetch all keys for given blockId.
+func (a *adapter) Keys(blockId uint64) []uint64 {
+	return a.db.Keys(blockId)
+}
+
 // Put appends the messages to the store.
-func (a *adapter) Delete(key uint64) error {
-	blockId := a.cacheID ^ key
+func (a *adapter) Delete(blockId, key uint64) error {
 	if err := a.db.Remove(blockId, key); err != nil {
 		return err
 	}
 	return nil
+}
+
+// NewWriter creates new log writer.
+func (a *adapter) NewWriter() error {
+	if w, err := a.wal.NewWriter(); err == nil {
+		a.logWriter = w
+		return err
+	}
+	return nil
+}
+
+// Append appends messages to the log.
+func (a *adapter) Append(data []byte) <-chan error {
+	return a.logWriter.Append(data)
+}
+
+// SignalInitWrite signals to write log.
+func (a *adapter) SignalInitWrite(seq uint64) <-chan error {
+	return a.logWriter.SignalInitWrite(seq)
+}
+
+// SignalLogApplied signals log has been applied for given upper sequence.
+// logs are released from wal so that space can be reused.
+func (a *adapter) SignalLogApplied(seq uint64) error {
+	return a.wal.SignalLogApplied(seq)
+}
+
+// Recovery recovers pending messages from log file.
+func (a *adapter) Recovery(path string, size int64, reset bool) (map[uint64][]byte, error) {
+	m := make(map[uint64][]byte) // map[key]msg
+	logOpts := wal.Options{Path: path + logPostfix, TargetSize: size, BufferSize: size}
+	wal, needLogRecovery, err := wal.New(logOpts)
+	if err != nil {
+		wal.Close()
+		return m, err
+	}
+
+	a.closer = wal
+	a.wal = wal
+	if !needLogRecovery || reset {
+		return m, nil
+	}
+
+	// start log recovery
+	r, err := wal.NewReader()
+	if err != nil {
+		return m, err
+	}
+	err = r.Read(func(lSeq uint64, last bool) (ok bool, err error) {
+		l := r.Count()
+		for i := uint32(0); i < l; i++ {
+			logData, ok, err := r.Next()
+			if err != nil {
+				return false, err
+			}
+			if !ok {
+				break
+			}
+			dBit := logData[0]
+			key := binary.LittleEndian.Uint64(logData[1:9])
+			msg := logData[9:]
+			if dBit == 1 {
+				if _, exists := m[key]; exists {
+					delete(m, key)
+				}
+			}
+			m[key] = msg
+		}
+		return false, nil
+	})
+	// if err !=nil{
+	// 	return err
+	// }
+
+	// for k, msg := range m {
+	// 	blockId :=
+	// 	a.db.Set()
+	// }
+	return m, err
 }
 
 func init() {

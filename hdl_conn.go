@@ -92,7 +92,7 @@ func (cc *clientConn) handler(msg packets.Packet) error {
 		cc.getType(mId).flowComplete()
 		cc.freeID(mId)
 	case *packets.Publish:
-		cc.recv <- msg.(*packets.Publish)
+		cc.pub <- msg.(*packets.Publish)
 	case *packets.Puback:
 		mId := cc.inboundID(m.MessageID)
 		cc.getType(mId).flowComplete()
@@ -156,7 +156,7 @@ func (cc *clientConn) dispatcher(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-cc.recv:
+		case msg, ok := <-cc.pub:
 			if !ok {
 				// Channel closed.
 				return
