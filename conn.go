@@ -80,8 +80,6 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 		recv:       make(chan packets.Packet),
 		pub:        make(chan *packets.Publish),
 		callbacks:  make(map[uint64]MessageHandler),
-		// Close
-		// closeC: make(chan struct{}),
 	}
 	WithDefaultOptions().set(cc.opts)
 	for _, opt := range opts {
@@ -126,9 +124,6 @@ func (cc *clientConn) close() error {
 	if !cc.setClosed() {
 		return errors.New("error disconnecting client")
 	}
-	if cc.cancel != nil {
-		cc.cancel()
-	}
 
 	// Wait for all goroutines to exit.
 	cc.closeW.Wait()
@@ -136,6 +131,9 @@ func (cc *clientConn) close() error {
 	close(cc.recv)
 	close(cc.pub)
 	store.Close()
+	if cc.cancel != nil {
+		cc.cancel()
+	}
 	return nil
 }
 
@@ -173,7 +171,7 @@ func (cc *clientConn) ConnectContext(ctx context.Context) error {
 		cc.updateLastTouched()
 		go cc.keepalive(ctx)
 	}
-	go cc.readLoop()      // process incoming messages
+	go cc.readLoop(ctx)   // process incoming messages
 	go cc.writeLoop(ctx)  // send messages to servers
 	go cc.dispatcher(ctx) // dispatch messages to client
 
@@ -260,6 +258,7 @@ func (cc *clientConn) Publish(topic, payload []byte, pubOpts ...PubOptions) Resu
 	pub := &packets.Publish{}
 	pub.Topic = topic
 	pub.Payload = payload
+	pub.Qos = opts.Qos
 
 	if fh.Qos != 0 && pub.MessageID == 0 {
 		mID := cc.nextID(r)
@@ -292,7 +291,7 @@ func (cc *clientConn) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	}
 
 	sub := &packets.Subscribe{}
-	sub.Subscribers = append(sub.Subscribers, &pbx.Subscriber{Topic: topic, Qos: opts.Qos})
+	sub.Subscribers = append(sub.Subscribers, &packets.Subscriber{Topic: topic, Qos: opts.Qos})
 
 	if opts.Callback != nil {
 	}
@@ -321,9 +320,9 @@ func (cc *clientConn) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	unsub := &packets.Unsubscribe{}
-	var subs []*pbx.Subscriber
+	var subs []*packets.Subscriber
 	for _, topic := range topics {
-		sub := &pbx.Subscriber{Topic: make([]byte, len(topic))}
+		sub := &packets.Subscriber{Topic: make([]byte, len(topic))}
 		copy(sub.Topic, topic)
 		subs = append(subs, sub)
 	}
@@ -407,11 +406,13 @@ func TimeNow() time.Time {
 }
 
 func (cc *clientConn) inboundID(id uint32) MID {
-	return MID(cc.connID - ((id << 4) | uint32(1)))
+	// return MID(cc.connID - ((id << 4) | uint32(1)))
+	return MID(cc.connID - id)
 }
 
 func (cc *clientConn) outboundID(mid MID) (id uint32) {
-	return cc.connID - ((uint32(mid) << 4) | uint32(0))
+	// return cc.connID - ((uint32(mid) << 4) | uint32(0))
+	return cc.connID - (uint32(mid))
 }
 
 func (cc *clientConn) updateLastAction() {
@@ -425,12 +426,12 @@ func (cc *clientConn) updateLastTouched() {
 }
 
 func (cc *clientConn) storeInbound(m packets.Packet) {
-	k := uint64(cc.contract)<<32 + uint64(cc.inboundID(m.Info().MessageID))
+	k := uint64(cc.inboundID(m.Info().MessageID))<<32 + uint64(cc.contract)
 	store.Message.PersistInbound(k, m)
 }
 
 func (cc *clientConn) storeOutbound(m packets.Packet) {
-	k := uint64(cc.contract)<<32 + uint64(m.Info().MessageID)
+	k := uint64(m.Info().MessageID)<<32 + uint64(cc.contract)
 	store.Message.PersistOutbound(k, m)
 }
 

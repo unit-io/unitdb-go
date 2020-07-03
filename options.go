@@ -95,9 +95,9 @@ func WithDefaultOptions() Options {
 		o.Password = ""
 		o.CleanSession = true
 		o.KeepAlive = 60
-		o.PingTimeout = 30 * time.Second
-		o.ConnectTimeout = 30 * time.Second
-		o.WriteTimeout = 10 * time.Second // 0 represents timeout disabled
+		o.PingTimeout = 60 * time.Second
+		o.ConnectTimeout = 60 * time.Second
+		o.WriteTimeout = 60 * time.Second // 0 represents timeout disabled
 		o.StorePath = "/tmp/unitdb"
 		o.StoreSize = 1 << 27
 		if o.WriteTimeout > 0 {

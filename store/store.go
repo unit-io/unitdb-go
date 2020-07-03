@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -185,10 +186,12 @@ func InitDb(path string, size int64, dur time.Duration, reset bool) error {
 		bufPool:    bpool.NewBufferPool(int64(size), nil),
 		tinyBatch:  &tinyBatch{},
 	}
+	Message.tinyBatch.buffer = Message.bufPool.Get()
 	if err := recovery(path, size, reset); err != nil {
 		return err
 	}
-	startLogReleaser(dur)
+	Message.tinyBatchLoop(15 * time.Millisecond)
+	logReleaser(dur)
 	return nil
 }
 
@@ -325,8 +328,10 @@ func (m *MessageStore) append(delFlag bool, k uint64, data []byte) error {
 	if _, err := m.tinyBatch.buffer.Write(key[:]); err != nil {
 		return err
 	}
-	if _, err := m.tinyBatch.buffer.Write(data); err != nil {
-		return err
+	if data != nil {
+		if _, err := m.tinyBatch.buffer.Write(data); err != nil {
+			return err
+		}
 	}
 
 	m.tinyBatch.incount()
@@ -378,17 +383,38 @@ func timeSeq(dur time.Duration) uint64 {
 	return uint64(time.Now().UTC().Truncate(dur).Round(time.Millisecond).Unix())
 }
 
-// logs are released from wal if older than a minute.
-func startLogReleaser(dur time.Duration) {
+// tinyBatchLoop handles tiny bacthes write to log.
+func (m *MessageStore) tinyBatchLoop(interval time.Duration) {
 	ctx := context.Background()
 	go func() {
-		ticker := time.NewTicker(dur)
-		defer ticker.Stop()
+		tinyBatchWriterTicker := time.NewTicker(interval)
+		defer func() {
+			tinyBatchWriterTicker.Stop()
+		}()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-ticker.C:
+			case <-tinyBatchWriterTicker.C:
+				if err := m.tinyCommit(); err != nil {
+					fmt.Println("Error committing tinyBatch")
+				}
+			}
+		}
+	}()
+}
+
+// logs are released from wal if older than a minute.
+func logReleaser(dur time.Duration) {
+	ctx := context.Background()
+	go func() {
+		logTicker := time.NewTicker(dur)
+		defer logTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-logTicker.C:
 				store.SignalLogApplied(timeSeq(dur))
 			}
 		}

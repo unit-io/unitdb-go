@@ -46,19 +46,20 @@ func verifyCONNACK(conn net.Conn) (uint32, uint32, bool) {
 }
 
 // Handle handles incoming messages
-func (cc *clientConn) readLoop() error {
-	cc.closeW.Add(1)
-	defer func() {
-		log.Info("conn.Handler", "closing...")
-		cc.close()
-		cc.closeW.Done()
-	}()
+func (cc *clientConn) readLoop(ctx context.Context) error {
+	defer log.Info("conn.Handler", "closing...")
 
 	reader := bufio.NewReaderSize(cc.conn, 65536)
 
 	for {
 		// Set read/write deadlines so we can close dangling connections
 		cc.conn.SetDeadline(time.Now().Add(time.Second * 120))
+
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
 
 		// Decode an incoming packet
 		msg, err := packets.ReadPacket(reader)
@@ -78,6 +79,9 @@ func (cc *clientConn) readLoop() error {
 
 // handle handles inbound messages.
 func (cc *clientConn) handler(msg packets.Packet) error {
+	cc.closeW.Add(1)
+	defer cc.closeW.Done()
+
 	cc.updateLastAction()
 
 	switch m := msg.(type) {
@@ -113,9 +117,6 @@ func (cc *clientConn) handler(msg packets.Packet) error {
 }
 
 func (cc *clientConn) writeLoop(ctx context.Context) {
-	cc.closeW.Add(1)
-	defer cc.closeW.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -149,9 +150,6 @@ func (cc *clientConn) writeLoop(ctx context.Context) {
 }
 
 func (cc *clientConn) dispatcher(ctx context.Context) {
-	cc.closeW.Add(1)
-	defer cc.closeW.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -172,9 +170,6 @@ func (cc *clientConn) dispatcher(ctx context.Context) {
 // keepalive - Send ping when connection unused for set period
 // connection passed in to avoid race condition on shutdown
 func (cc *clientConn) keepalive(ctx context.Context) {
-	cc.closeW.Add(1)
-	defer cc.closeW.Done()
-
 	var pingInterval int64
 	var pingSent time.Time
 
@@ -191,8 +186,6 @@ func (cc *clientConn) keepalive(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		// case <-cc.closeC:
-		// 	return
 		case <-pingTicker.C:
 			lastAction := cc.lastAction.Load().(time.Time)
 			lastTouched := cc.lastTouched.Load().(time.Time)

@@ -186,14 +186,7 @@ func (a *adapter) Recovery(path string, size int64, reset bool) (map[uint64][]by
 		}
 		return false, nil
 	})
-	// if err !=nil{
-	// 	return err
-	// }
 
-	// for k, msg := range m {
-	// 	blockId :=
-	// 	a.db.Set()
-	// }
 	return m, err
 }
 

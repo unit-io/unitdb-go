@@ -9,16 +9,30 @@ import (
 )
 
 type (
-	Subscriber  pbx.Subscriber
-	Subscribe   pbx.Subscribe
+	Subscriber pbx.Subscriber
+	Subscribe  struct {
+		MessageID   uint32
+		Subscribers []*Subscriber
+	}
 	Suback      pbx.Suback
-	Unsubscribe pbx.Unsubscribe
-	Unsuback    pbx.Unsuback
+	Unsubscribe struct {
+		MessageID   uint32
+		Subscribers []*Subscriber
+	}
+	Unsuback pbx.Unsuback
 )
 
 func (s *Subscribe) encode() (bytes.Buffer, error) {
 	var buf bytes.Buffer
-	sub := pbx.Subscribe(*s)
+	var subs []*pbx.Subscriber
+	for _, sub := range s.Subscribers {
+		s := pbx.Subscriber(*sub)
+		subs = append(subs, &s)
+	}
+	sub := pbx.Subscribe{
+		MessageID:   s.MessageID,
+		Subscribers: subs,
+	}
 	pkt, err := proto.Marshal(&sub)
 	if err != nil {
 		return buf, err
@@ -110,7 +124,15 @@ func (s *Suback) Info() Info {
 
 func (u *Unsubscribe) encode() (bytes.Buffer, error) {
 	var buf bytes.Buffer
-	unsub := pbx.Unsubscribe(*u)
+	var subs []*pbx.Subscriber
+	for _, sub := range u.Subscribers {
+		s := pbx.Subscriber(*sub)
+		subs = append(subs, &s)
+	}
+	unsub := pbx.Unsubscribe{
+		MessageID:   u.MessageID,
+		Subscribers: subs,
+	}
 	pkt, err := proto.Marshal(&unsub)
 	if err != nil {
 		return buf, err
@@ -203,9 +225,17 @@ func (u *Unsuback) Info() Info {
 func unpackSubscribe(data []byte) Packet {
 	var pkt pbx.Subscribe
 	proto.Unmarshal(data, &pkt)
+	var subs []*Subscriber
+	for _, sub := range pkt.Subscribers {
+		s := &Subscriber{
+			Topic: sub.Topic,
+			Qos:   sub.Qos,
+		}
+		subs = append(subs, s)
+	}
 	return &Subscribe{
 		MessageID:   pkt.MessageID,
-		Subscribers: pkt.Subscribers,
+		Subscribers: subs,
 	}
 }
 
@@ -221,9 +251,17 @@ func unpackSuback(data []byte) Packet {
 func unpackUnsubscribe(data []byte) Packet {
 	var pkt pbx.Unsubscribe
 	proto.Unmarshal(data, &pkt)
+	var subs []*Subscriber
+	for _, sub := range pkt.Subscribers {
+		s := &Subscriber{
+			Topic: sub.Topic,
+			Qos:   sub.Qos,
+		}
+		subs = append(subs, s)
+	}
 	return &Unsubscribe{
 		MessageID:   pkt.MessageID,
-		Subscribers: pkt.Subscribers,
+		Subscribers: subs,
 	}
 }
 

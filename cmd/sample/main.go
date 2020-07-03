@@ -35,7 +35,7 @@ func main() {
 	id := flag.String("id", "UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ", "The ClientID (optional)")
 	num := flag.Int("num", 1, "The number of messages to publish or subscribe (default 1)")
 	payload := flag.String("message", "Hello team alpha channel1!", "The message text to publish (default empty)")
-	action := flag.String("action", "sub", "Action publish or subscribe (required)")
+	action := flag.String("action", "pub", "Action publish or subscribe (required)")
 	flag.Parse()
 
 	if *action != "pub" && *action != "sub" && *action != "unsub" && *action != "keygen" {
@@ -132,7 +132,7 @@ func main() {
 		}
 		fmt.Println("Publisher Started")
 		for i := 0; i < *num; i++ {
-			r := client.Publish([]byte(*topic), []byte(*payload))
+			r := client.Publish([]byte(*topic), []byte(*payload), unitd.WithPubQos(2))
 			if _, err := r.Get(ctx, 1*time.Second); err != nil {
 				log.Fatalf("err: %s", err)
 			}
@@ -167,7 +167,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe([]byte(*topic))
+		r := client.Subscribe([]byte(*topic), unitd.WithSubQos(2))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)

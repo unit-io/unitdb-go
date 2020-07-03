@@ -28,7 +28,7 @@ func (mids *messageIds) freeID(id MID) {
 func (mids *messageIds) nextID(r Result) MID {
 	mids.Lock()
 	defer mids.Unlock()
-	mids.id -= 1
+	mids.id--
 	mids.index[mids.id] = r
 	return mids.id
 }
