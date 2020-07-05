@@ -47,7 +47,11 @@ func verifyCONNACK(conn net.Conn) (uint32, uint32, bool) {
 
 // Handle handles incoming messages
 func (cc *clientConn) readLoop(ctx context.Context) error {
-	defer log.Info("conn.Handler", "closing...")
+	// cc.closeW.Add(1)
+	defer func() {
+		defer log.Info("conn.Handler", "closing...")
+		// cc.closeW.Done()
+	}()
 
 	reader := bufio.NewReaderSize(cc.conn, 65536)
 
@@ -58,30 +62,28 @@ func (cc *clientConn) readLoop(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-cc.closeC:
+			return nil
 		default:
-		}
+			// Decode an incoming packet
+			msg, err := packets.ReadPacket(reader)
+			if err != nil {
+				return err
+			}
 
-		// Decode an incoming packet
-		msg, err := packets.ReadPacket(reader)
-		if err != nil {
-			return err
-		}
+			// Persist incoming
+			cc.storeInbound(msg)
 
-		// Persist incoming
-		cc.storeInbound(msg)
-
-		// Message handler
-		if err := cc.handler(msg); err != nil {
-			return err
+			// Message handler
+			if err := cc.handler(msg); err != nil {
+				return err
+			}
 		}
 	}
 }
 
 // handle handles inbound messages.
 func (cc *clientConn) handler(msg packets.Packet) error {
-	cc.closeW.Add(1)
-	defer cc.closeW.Done()
-
 	cc.updateLastAction()
 
 	switch m := msg.(type) {
@@ -117,9 +119,14 @@ func (cc *clientConn) handler(msg packets.Packet) error {
 }
 
 func (cc *clientConn) writeLoop(ctx context.Context) {
+	// cc.closeW.Add(1)
+	// defer cc.closeW.Done()
+
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-cc.closeC:
 			return
 		case msg, ok := <-cc.send:
 			if !ok {
@@ -150,9 +157,14 @@ func (cc *clientConn) writeLoop(ctx context.Context) {
 }
 
 func (cc *clientConn) dispatcher(ctx context.Context) {
+	// cc.closeW.Add(1)
+	// defer cc.closeW.Done()
+
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-cc.closeC:
 			return
 		case msg, ok := <-cc.pub:
 			if !ok {
@@ -170,6 +182,9 @@ func (cc *clientConn) dispatcher(ctx context.Context) {
 // keepalive - Send ping when connection unused for set period
 // connection passed in to avoid race condition on shutdown
 func (cc *clientConn) keepalive(ctx context.Context) {
+	// cc.closeW.Add(1)
+	// defer cc.closeW.Done()
+
 	var pingInterval int64
 	var pingSent time.Time
 
@@ -185,6 +200,8 @@ func (cc *clientConn) keepalive(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			return
+		case <-cc.closeC:
 			return
 		case <-pingTicker.C:
 			lastAction := cc.lastAction.Load().(time.Time)

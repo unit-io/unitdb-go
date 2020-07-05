@@ -245,6 +245,7 @@ func (p *Pubcomp) String() string {
 func (p *Pubcomp) Info() Info {
 	return Info{Qos: 0, MessageID: p.MessageID}
 }
+
 func unpackPublish(data []byte) Packet {
 	var pkt pbx.Publish
 	proto.Unmarshal(data, &pkt)

@@ -36,6 +36,10 @@ type ClientConn interface {
 	// Disconnect will end the connection with the server, but not before waiting
 	// the client wait group is done.
 	Disconnect() error
+	// DisconnectContext will end the connection with the server, but not before waiting
+	// the client wait group is done.
+	// The context used grpc stream to signal context done.
+	DisconnectContext(ctx context.Context) error
 	// Publish will publish a message with the specified QoS and content
 	// to the specified topic.
 	Publish(topic, payload []byte, pubOpts ...PubOptions) Result
@@ -67,6 +71,7 @@ type clientConn struct {
 	lastAction atomic.Value
 
 	// Close.
+	closeC chan struct{}
 	closeW sync.WaitGroup
 	closed uint32
 }
@@ -80,6 +85,8 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 		recv:       make(chan packets.Packet),
 		pub:        make(chan *packets.Publish),
 		callbacks:  make(map[uint64]MessageHandler),
+		// close
+		closeC: make(chan struct{}),
 	}
 	WithDefaultOptions().set(cc.opts)
 	for _, opt := range opts {
@@ -96,7 +103,7 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 	}
 
 	// Init message store and recover pending messages from log file if reset is set false
-	if err := store.InitDb(cc.opts.StorePath, int64(cc.opts.StoreSize), cc.opts.StoreLogReleaseDuration, false); err != nil {
+	if err := store.InitMessageStore(cc.opts.StorePath, int64(cc.opts.StoreSize), cc.opts.StoreLogReleaseDuration, false); err != nil {
 		return nil, err
 	}
 
@@ -125,6 +132,9 @@ func (cc *clientConn) close() error {
 		return errors.New("error disconnecting client")
 	}
 
+	// Signal all goroutines.
+	close(cc.closeC)
+	// time.Sleep(cc.opts.WriteTimeout)
 	// Wait for all goroutines to exit.
 	cc.closeW.Wait()
 	close(cc.send)
@@ -164,7 +174,7 @@ func (cc *clientConn) ConnectContext(ctx context.Context) error {
 		cc.resume(cc.opts.ResumeSubs)
 	} else {
 		// contract is used as blockId and key prefix
-		store.Message.Reset(cc.contract)
+		store.Log.Reset(cc.contract)
 	}
 	if cc.opts.KeepAlive != 0 {
 		cc.updateLastAction()
@@ -206,7 +216,7 @@ func (cc *clientConn) attemptConnection(ctx context.Context) error {
 			break // successfully connected
 		}
 		if cc.conn != nil {
-			cc.Disconnect()
+			cc.DisconnectContext(ctx)
 		}
 	}
 	return nil
@@ -214,6 +224,11 @@ func (cc *clientConn) attemptConnection(ctx context.Context) error {
 
 // Disconnect will disconnect the connection to the server
 func (cc *clientConn) Disconnect() error {
+	return cc.DisconnectContext(context.Background())
+}
+
+// Disconnect will disconnect the connection to the server
+func (cc *clientConn) DisconnectContext(ctx context.Context) error {
 	if err := cc.ok(); err != nil {
 		// Disconnect() called but not connected
 		return nil
@@ -222,7 +237,8 @@ func (cc *clientConn) Disconnect() error {
 	p := &packets.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
 	cc.send <- &PacketAndResult{p: p, r: r}
-	return nil
+	_, err := r.Get(ctx, cc.opts.WriteTimeout)
+	return err
 }
 
 // internalConnLost cleanup when connection is lost or an error occurs
@@ -347,9 +363,9 @@ func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
 // Load all stored messages and resend them to ensure QOS > 1,2 even after an application crash.
 func (cc *clientConn) resume(subscription bool) {
 	// contract is used as blockId and key prefix
-	keys := store.Message.Keys(cc.contract)
+	keys := store.Log.Keys(cc.contract)
 	for _, k := range keys {
-		msg := store.Message.Get(k)
+		msg := store.Log.Get(k)
 		if msg == nil {
 			continue
 		}
@@ -387,14 +403,14 @@ func (cc *clientConn) resume(subscription bool) {
 				// cc.claimID(token, details.MessageID)
 				cc.send <- &PacketAndResult{p: msg, r: r}
 			default:
-				store.Message.Delete(k)
+				store.Log.Delete(k)
 			}
 		} else {
 			switch msg.(type) {
 			case *packets.Pubrel:
 				cc.recv <- msg
 			default:
-				store.Message.Delete(k)
+				store.Log.Delete(k)
 			}
 		}
 	}
@@ -427,12 +443,12 @@ func (cc *clientConn) updateLastTouched() {
 
 func (cc *clientConn) storeInbound(m packets.Packet) {
 	k := uint64(cc.inboundID(m.Info().MessageID))<<32 + uint64(cc.contract)
-	store.Message.PersistInbound(k, m)
+	store.Log.PersistInbound(k, m)
 }
 
 func (cc *clientConn) storeOutbound(m packets.Packet) {
 	k := uint64(m.Info().MessageID)<<32 + uint64(cc.contract)
-	store.Message.PersistOutbound(k, m)
+	store.Log.PersistOutbound(k, m)
 }
 
 // Set closed flag; return true if not already closed.

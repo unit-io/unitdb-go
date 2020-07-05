@@ -35,7 +35,7 @@ func main() {
 	id := flag.String("id", "UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ", "The ClientID (optional)")
 	num := flag.Int("num", 1, "The number of messages to publish or subscribe (default 1)")
 	payload := flag.String("message", "Hello team alpha channel1!", "The message text to publish (default empty)")
-	action := flag.String("action", "pub", "Action publish or subscribe (required)")
+	action := flag.String("action", "sub", "Action publish or subscribe (required)")
 	flag.Parse()
 
 	if *action != "pub" && *action != "sub" && *action != "unsub" && *action != "keygen" {
@@ -104,7 +104,7 @@ func main() {
 		for {
 			select {
 			case <-ctx.Done():
-				client.Disconnect()
+				client.DisconnectContext(ctx)
 				fmt.Println("Subscriber Disconnected")
 				return
 			case incoming := <-recv:
@@ -138,7 +138,8 @@ func main() {
 			}
 		}
 
-		client.Disconnect()
+		time.Sleep(1 * time.Second)
+		client.DisconnectContext(ctx)
 		fmt.Println("Publisher Disconnected")
 	} else {
 		recv := make(chan [2][]byte)
@@ -176,7 +177,7 @@ func main() {
 		for {
 			select {
 			case <-ctx.Done():
-				client.Disconnect()
+				client.DisconnectContext(ctx)
 				fmt.Println("Subscriber Disconnected")
 				return
 			case incoming := <-recv:

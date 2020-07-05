@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultDatabase = "unitd"
+	defaultDatabase = "messages"
 
 	dbVersion = 1.0
 
@@ -88,16 +88,16 @@ func (a *adapter) GetName() string {
 	return adapterName
 }
 
-// Put appends the messages to the store.
-func (a *adapter) Put(blockId, key uint64, payload []byte) error {
+// PutMessage appends the messages to the store.
+func (a *adapter) PutMessage(blockId, key uint64, payload []byte) error {
 	if err := a.db.Set(blockId, key, payload); err != nil {
 		return err
 	}
 	return nil
 }
 
-// Get performs a query and attempts to fetch message for the given blockId and key
-func (a *adapter) Get(blockId, key uint64) (matches []byte, err error) {
+// GetMessage performs a query and attempts to fetch message for the given blockId and key
+func (a *adapter) GetMessage(blockId, key uint64) (matches []byte, err error) {
 	matches, err = a.db.Get(blockId, key)
 	if err != nil {
 		return nil, err
@@ -110,8 +110,8 @@ func (a *adapter) Keys(blockId uint64) []uint64 {
 	return a.db.Keys(blockId)
 }
 
-// Put appends the messages to the store.
-func (a *adapter) Delete(blockId, key uint64) error {
+// DeleteMessage deletes message from memdb store.
+func (a *adapter) DeleteMessage(blockId, key uint64) error {
 	if err := a.db.Remove(blockId, key); err != nil {
 		return err
 	}
@@ -146,7 +146,7 @@ func (a *adapter) SignalLogApplied(seq uint64) error {
 // Recovery recovers pending messages from log file.
 func (a *adapter) Recovery(path string, size int64, reset bool) (map[uint64][]byte, error) {
 	m := make(map[uint64][]byte) // map[key]msg
-	logOpts := wal.Options{Path: path + logPostfix, TargetSize: size, BufferSize: size}
+	logOpts := wal.Options{Path: path + "/" + defaultDatabase + logPostfix, TargetSize: size, BufferSize: size}
 	wal, needLogRecovery, err := wal.New(logOpts)
 	if err != nil {
 		wal.Close()

@@ -10,66 +10,22 @@ import (
 	"time"
 
 	"github.com/unit-io/bpool"
+	adapter "github.com/unit-io/unitd-go/db"
 	"github.com/unit-io/unitd-go/packets"
 )
 
-// Store represents a message storage contract that message storage provides
-// must fulfill.
-type Store interface {
-	// Open and configure the adapter
-	Open(path string) error
-	// Close the adapter
-	Close() error
-	// IsOpen checks if the adapter is ready for use
-	IsOpen() bool
-	// // CheckDbVersion checks if the actual database version matches adapter version.
-	// CheckDbVersion() error
-	// GetName returns the name of the adapter
-	GetName() string
-
-	// Put is used to store a message.
-	// it returns an error if some error was encountered during storage.
-	Put(blockId, key uint64, payload []byte) error
-
-	// Get performs a query and attempts to fetch message for the given blockId and key
-	Get(blockId, key uint64) ([]byte, error)
-
-	// Keys performs a query and attempts to fetch all keys for given blockId.
-	Keys(blockId uint64) []uint64
-
-	// Delete is used to delete message.
-	// it returns an error if some error was encountered during delete.
-	Delete(blockId, key uint64) error
-
-	// NewWriter creates new log writer
-	NewWriter() error
-
-	// Append appends messages to the log
-	Append(data []byte) <-chan error
-
-	// SignalInitWrite signal to write messages to log file
-	SignalInitWrite(seq uint64) <-chan error
-
-	// SignalLogApplied signals log has been applied for given upper sequence.
-	// logs are released from wal so that space can be reused.
-	SignalLogApplied(seq uint64) error
-
-	// Recovery loads pending messages from log file into store
-	Recovery(path string, size int64, reset bool) (map[uint64][]byte, error)
-}
-
-var store Store
+var adp adapter.Log
 
 func open(path string) error {
-	if store == nil {
+	if adp == nil {
 		return errors.New("store: database adapter is missing")
 	}
 
-	if store.IsOpen() {
+	if adp.IsOpen() {
 		return errors.New("store: connection is already opened")
 	}
 
-	return store.Open(path)
+	return adp.Open(path)
 }
 
 // Open initializes the persistence system. Adapter holds a connection pool for a database instance.
@@ -85,8 +41,8 @@ func Open(path string) error {
 
 // Close terminates connection to persistent storage.
 func Close() error {
-	if store.IsOpen() {
-		return store.Close()
+	if adp.IsOpen() {
+		return adp.Close()
 	}
 
 	return nil
@@ -94,8 +50,8 @@ func Close() error {
 
 // IsOpen checks if persistent storage connection has been initialized.
 func IsOpen() bool {
-	if store != nil {
-		return store.IsOpen()
+	if adp != nil {
+		return adp.IsOpen()
 	}
 
 	return false
@@ -103,8 +59,8 @@ func IsOpen() bool {
 
 // GetAdapterName returns the name of the current adater.
 func GetAdapterName() string {
-	if store != nil {
-		return store.GetName()
+	if adp != nil {
+		return adp.GetName()
 	}
 
 	return ""
@@ -112,16 +68,16 @@ func GetAdapterName() string {
 
 // RegisterAdapter makes a persistence adapter available.
 // If Register is called twice or if the adapter is nil, it panics.
-func RegisterAdapter(name string, s Store) {
-	if s == nil {
+func RegisterAdapter(name string, l adapter.Log) {
+	if l == nil {
 		panic("store: Register adapter is nil")
 	}
 
-	if store != nil {
-		panic("store: adapter '" + store.GetName() + "' is already registered")
+	if adp != nil {
+		panic("store: adapter '" + adp.GetName() + "' is already registered")
 	}
 
-	store = s
+	adp = l
 }
 
 type (
@@ -148,8 +104,8 @@ func (b *tinyBatch) incount() uint32 {
 	return atomic.AddUint32(&b.entryCount, 1)
 }
 
-// MessageStore is a Message struct to hold methods for persistence mapping for the Message object.
-type MessageStore struct {
+// MessageLog is a Message struct to hold methods for persistence mapping for the Message object.
+type MessageLog struct {
 	seq        uint64
 	writeLockC chan struct{}
 	bufPool    *bpool.BufferPool
@@ -157,46 +113,46 @@ type MessageStore struct {
 	tinyBatch *tinyBatch
 }
 
-// Message is the anchor for storing/retrieving Message objects
-var Message MessageStore
+// Log is the anchor for storing/retrieving Message objects
+var Log MessageLog
 
 func recovery(path string, size int64, reset bool) error {
-	m, err := store.Recovery(path, size, reset)
+	m, err := adp.Recovery(path, size, reset)
 	if err != nil {
 		return err
 	}
 	for k, msg := range m {
 		blockId := k & 0xFFFFFFFF
-		if err := store.Put(blockId, k, msg); err != nil {
+		if err := adp.PutMessage(blockId, k, msg); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// InitDb init message store and start recovery if reset flag is not set.
-func InitDb(path string, size int64, dur time.Duration, reset bool) error {
+// InitMessageStore init message store and start recovery if reset flag is not set.
+func InitMessageStore(path string, size int64, dur time.Duration, reset bool) error {
 	if !IsOpen() {
 		if err := open(path); err != nil {
 			return err
 		}
 	}
-	Message = MessageStore{
+	Log = MessageLog{
 		writeLockC: make(chan struct{}, 1),
 		bufPool:    bpool.NewBufferPool(int64(size), nil),
 		tinyBatch:  &tinyBatch{},
 	}
-	Message.tinyBatch.buffer = Message.bufPool.Get()
+	Log.tinyBatch.buffer = Log.bufPool.Get()
 	if err := recovery(path, size, reset); err != nil {
 		return err
 	}
-	Message.tinyBatchLoop(15 * time.Millisecond)
+	Log.tinyBatchLoop(15 * time.Millisecond)
 	logReleaser(dur)
 	return nil
 }
 
 // handle which outgoing messages are stored
-func (m *MessageStore) PersistOutbound(key uint64, msg packets.Packet) {
+func (m *MessageLog) PersistOutbound(key uint64, msg packets.Packet) {
 	blockId := key & 0xFFFFFFFF
 	switch msg.Info().Qos {
 	case 0:
@@ -204,7 +160,7 @@ func (m *MessageStore) PersistOutbound(key uint64, msg packets.Packet) {
 		case *packets.Puback, *packets.Pubcomp:
 			// Sending puback. delete matching publish
 			// from ibound
-			store.Delete(blockId, key)
+			adp.DeleteMessage(blockId, key)
 			m.append(true, key, nil)
 		}
 	case 1:
@@ -213,7 +169,7 @@ func (m *MessageStore) PersistOutbound(key uint64, msg packets.Packet) {
 			// Sending publish. store in obound
 			// until puback received
 			data := msg.Encode()
-			store.Put(blockId, key, data)
+			adp.PutMessage(blockId, key, data)
 			m.append(false, key, data)
 		default:
 		}
@@ -223,7 +179,7 @@ func (m *MessageStore) PersistOutbound(key uint64, msg packets.Packet) {
 			// Sending publish. store in obound
 			// until pubrel received
 			data := msg.Encode()
-			store.Put(blockId, key, data)
+			adp.PutMessage(blockId, key, data)
 			m.append(false, key, data)
 		default:
 		}
@@ -231,7 +187,7 @@ func (m *MessageStore) PersistOutbound(key uint64, msg packets.Packet) {
 }
 
 // handle which incoming messages are stored
-func (m *MessageStore) PersistInbound(key uint64, msg packets.Packet) {
+func (m *MessageLog) PersistInbound(key uint64, msg packets.Packet) {
 	blockId := key & 0xFFFFFFFF
 	switch msg.Info().Qos {
 	case 0:
@@ -239,7 +195,7 @@ func (m *MessageStore) PersistInbound(key uint64, msg packets.Packet) {
 		case *packets.Puback, *packets.Suback, *packets.Unsuback, *packets.Pubcomp:
 			// Received a puback. delete matching publish
 			// from obound
-			store.Delete(blockId, key)
+			adp.DeleteMessage(blockId, key)
 			m.append(true, key, nil)
 		case *packets.Publish, *packets.Pubrec, *packets.Pingresp, *packets.Connack:
 		default:
@@ -250,7 +206,7 @@ func (m *MessageStore) PersistInbound(key uint64, msg packets.Packet) {
 			// Received a publish. store it in ibound
 			// until puback sent
 			data := msg.Encode()
-			store.Put(blockId, key, data)
+			adp.PutMessage(blockId, key, data)
 			m.append(false, key, data)
 		default:
 		}
@@ -260,7 +216,7 @@ func (m *MessageStore) PersistInbound(key uint64, msg packets.Packet) {
 			// Received a publish. store it in ibound
 			// until pubrel received
 			data := msg.Encode()
-			store.Put(blockId, key, data)
+			adp.PutMessage(blockId, key, data)
 			m.append(false, key, data)
 		default:
 		}
@@ -268,9 +224,9 @@ func (m *MessageStore) PersistInbound(key uint64, msg packets.Packet) {
 }
 
 // Get performs a query and attempts to fetch message for the given blockId and key
-func (m *MessageStore) Get(key uint64) packets.Packet {
+func (m *MessageLog) Get(key uint64) packets.Packet {
 	blockId := key & 0xFFFFFFFF
-	if raw, err := store.Get(blockId, key); raw != nil && err == nil {
+	if raw, err := adp.GetMessage(blockId, key); raw != nil && err == nil {
 		r := bytes.NewReader(raw)
 		if msg, err := packets.ReadPacket(r); err == nil {
 			return msg
@@ -280,9 +236,9 @@ func (m *MessageStore) Get(key uint64) packets.Packet {
 }
 
 // Keys performs a query and attempts to fetch all keys for given blockId and key prefix.
-func (m *MessageStore) Keys(prefix uint32) []uint64 {
+func (m *MessageLog) Keys(prefix uint32) []uint64 {
 	matches := make([]uint64, 0)
-	keys := store.Keys(uint64(prefix))
+	keys := adp.Keys(uint64(prefix))
 	for _, k := range keys {
 		if evalPrefix(k, prefix) {
 			matches = append(matches, k)
@@ -292,24 +248,24 @@ func (m *MessageStore) Keys(prefix uint32) []uint64 {
 }
 
 // Delete is used to delete message.
-func (m *MessageStore) Delete(key uint64) {
+func (m *MessageLog) Delete(key uint64) {
 	blockId := key & 0xFFFFFFFF
-	store.Delete(blockId, key)
+	adp.DeleteMessage(blockId, key)
 	m.append(true, key, nil)
 }
 
 // Reset removes all keys from store for the given blockId and key prefix
-func (m *MessageStore) Reset(prefix uint32) {
-	keys := store.Keys(uint64(prefix))
+func (m *MessageLog) Reset(prefix uint32) {
+	keys := adp.Keys(uint64(prefix))
 	for _, k := range keys {
 		if evalPrefix(k, prefix) {
-			store.Delete(uint64(prefix), k)
+			adp.DeleteMessage(uint64(prefix), k)
 		}
 	}
 }
 
 // append appends message to tinyBatch for writing to log file.
-func (m *MessageStore) append(delFlag bool, k uint64, data []byte) error {
+func (m *MessageLog) append(delFlag bool, k uint64, data []byte) error {
 	var dBit uint8
 	if delFlag {
 		dBit = 1
@@ -339,12 +295,12 @@ func (m *MessageStore) append(delFlag bool, k uint64, data []byte) error {
 }
 
 // tinyCommit commits tiny batch to log file
-func (m *MessageStore) tinyCommit() error {
+func (m *MessageLog) tinyCommit() error {
 	if m.tinyBatch.count() == 0 {
 		return nil
 	}
 
-	if err := store.NewWriter(); err != nil {
+	if err := adp.NewWriter(); err != nil {
 		return err
 	}
 	// commit writes batches into write ahead log. The write happen synchronously.
@@ -358,13 +314,13 @@ func (m *MessageStore) tinyCommit() error {
 	for i := uint32(0); i < m.tinyBatch.count(); i++ {
 		dataLen := binary.LittleEndian.Uint32(buf[offset : offset+4])
 		data := buf[offset+4 : offset+dataLen]
-		if err := <-store.Append(data); err != nil {
+		if err := <-adp.Append(data); err != nil {
 			return err
 		}
 		offset += dataLen
 	}
 
-	if err := <-store.SignalInitWrite(timeNow()); err != nil {
+	if err := <-adp.SignalInitWrite(timeNow()); err != nil {
 		return err
 	}
 	m.tinyBatch.reset()
@@ -384,7 +340,7 @@ func timeSeq(dur time.Duration) uint64 {
 }
 
 // tinyBatchLoop handles tiny bacthes write to log.
-func (m *MessageStore) tinyBatchLoop(interval time.Duration) {
+func (m *MessageLog) tinyBatchLoop(interval time.Duration) {
 	ctx := context.Background()
 	go func() {
 		tinyBatchWriterTicker := time.NewTicker(interval)
@@ -415,7 +371,7 @@ func logReleaser(dur time.Duration) {
 			case <-ctx.Done():
 				return
 			case <-logTicker.C:
-				store.SignalLogApplied(timeSeq(dur))
+				adp.SignalLogApplied(timeSeq(dur))
 			}
 		}
 	}()
