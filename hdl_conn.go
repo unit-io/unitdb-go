@@ -108,6 +108,8 @@ func (cc *clientConn) handler(msg packets.Packet) error {
 		cc.send <- &PacketAndResult{p: p}
 	case *packets.Pubrel:
 		p := packets.Packet(&packets.Pubcomp{MessageID: m.MessageID})
+		// persist outbound
+		cc.storeOutbound(p)
 		cc.send <- &PacketAndResult{p: p}
 	case *packets.Pubcomp:
 		mId := cc.inboundID(m.MessageID)
@@ -140,12 +142,6 @@ func (cc *clientConn) writeLoop(ctx context.Context) {
 					mId := cc.inboundID(m.MessageID)
 					cc.freeID(mId)
 				}
-			case *packets.Puback:
-				// persist outbound
-				cc.storeOutbound(m)
-			case *packets.Pubrel:
-				// persist outbound
-				cc.storeOutbound(m)
 			case *packets.Disconnect:
 				msg.r.(*DisconnectResult).flowComplete()
 				mId := cc.inboundID(m.MessageID)
@@ -234,6 +230,8 @@ func ack(cc *clientConn, packet *packets.Publish) func() {
 			cc.send <- &PacketAndResult{p: p}
 		case 1:
 			p := packets.Packet(&packets.Puback{MessageID: packet.MessageID})
+			// persist outbound
+			cc.storeOutbound(p)
 			cc.send <- &PacketAndResult{p: p}
 		case 0:
 			// do nothing, since there is no need to send an ack packet back

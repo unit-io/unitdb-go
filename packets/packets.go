@@ -56,8 +56,8 @@ func ReadPacket(r io.Reader) (Packet, error) {
 		return &Disconnect{}, nil
 	}
 
-	buf := make([]byte, fh.RemainingLength)
-	_, err := io.ReadFull(r, buf)
+	msg := make([]byte, fh.RemainingLength)
+	_, err := io.ReadFull(r, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -66,27 +66,27 @@ func ReadPacket(r io.Reader) (Packet, error) {
 	var pkt Packet
 	switch fh.MessageType {
 	case pbx.MessageType_CONNECT:
-		pkt = unpackConnect(buf)
+		pkt = unpackConnect(msg)
 	case pbx.MessageType_CONNACK:
-		pkt = unpackConnack(buf)
+		pkt = unpackConnack(msg)
 	case pbx.MessageType_PUBLISH:
-		pkt = unpackPublish(buf)
+		pkt = unpackPublish(msg)
 	case pbx.MessageType_PUBACK:
-		pkt = unpackPuback(buf)
+		pkt = unpackPuback(msg)
 	case pbx.MessageType_PUBREC:
-		pkt = unpackPubrec(buf)
+		pkt = unpackPubrec(msg)
 	case pbx.MessageType_PUBREL:
-		pkt = unpackPubrel(buf)
+		pkt = unpackPubrel(msg)
 	case pbx.MessageType_PUBCOMP:
-		pkt = unpackPubcomp(buf)
+		pkt = unpackPubcomp(msg)
 	case pbx.MessageType_SUBSCRIBE:
-		pkt = unpackSubscribe(buf)
+		pkt = unpackSubscribe(msg)
 	case pbx.MessageType_SUBACK:
-		pkt = unpackSuback(buf)
+		pkt = unpackSuback(msg)
 	case pbx.MessageType_UNSUBSCRIBE:
-		pkt = unpackUnsubscribe(buf)
+		pkt = unpackUnsubscribe(msg)
 	case pbx.MessageType_UNSUBACK:
-		pkt = unpackUnsuback(buf)
+		pkt = unpackUnsuback(msg)
 	default:
 		return nil, fmt.Errorf("Invalid zero-length packet with type %d", fh.MessageType)
 	}
@@ -95,16 +95,16 @@ func ReadPacket(r io.Reader) (Packet, error) {
 }
 
 func (fh *FixedHeader) pack() bytes.Buffer {
-	var buf bytes.Buffer
+	var head bytes.Buffer
 	ph := pbx.FixedHeader(*fh)
 	h, err := proto.Marshal(&ph)
 	if err != nil {
-		return buf
+		return head
 	}
 	size := encodeLength(len(h))
-	buf.Write(size)
-	buf.Write(h)
-	return buf
+	head.Write(size)
+	head.Write(h)
+	return head
 }
 
 func (fh *FixedHeader) unpack(r io.Reader) error {
@@ -114,14 +114,14 @@ func (fh *FixedHeader) unpack(r io.Reader) error {
 	}
 
 	// read FixedHeader
-	buf := make([]byte, fhSize)
-	_, err = io.ReadFull(r, buf)
+	head := make([]byte, fhSize)
+	_, err = io.ReadFull(r, head)
 	if err != nil {
 		return err
 	}
 
 	var h pbx.FixedHeader
-	proto.Unmarshal(buf, &h)
+	proto.Unmarshal(head, &h)
 
 	*fh = FixedHeader(h)
 	return nil

@@ -17,34 +17,34 @@ type (
 )
 
 func (c *Connect) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	conn := pbx.Conn(*c)
 	pkt, err := proto.Marshal(&conn)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_CONNECT, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (c *Connect) Encode() []byte {
-	buf, err := c.encode()
+	msg, err := c.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded message to the underlying writer.
 func (c *Connect) WriteTo(w io.Writer) (int64, error) {
-	buf, err := c.encode()
+	msg, err := c.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the packet type.
@@ -63,34 +63,34 @@ func (c *Connect) Info() Info {
 }
 
 func (c *Connack) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	connack := pbx.Connack(*c)
 	pkt, err := proto.Marshal(&connack)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_CONNACK, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (c *Connack) Encode() []byte {
-	buf, err := c.encode()
+	msg, err := c.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded message to the buffer.
 func (c *Connack) WriteTo(w io.Writer) (int64, error) {
-	buf, err := c.encode()
+	msg, err := c.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the packet type.
@@ -109,34 +109,34 @@ func (c *Connack) Info() Info {
 }
 
 func (p *Pingreq) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	pingreq := pbx.Pingreq(*p)
 	pkt, err := proto.Marshal(&pingreq)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_PINGREQ, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (p *Pingreq) Encode() []byte {
-	buf, err := p.encode()
+	msg, err := p.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded packet to the underlying writer.
 func (p *Pingreq) WriteTo(w io.Writer) (int64, error) {
-	buf, err := p.encode()
+	msg, err := p.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the packet type.
@@ -155,34 +155,34 @@ func (p *Pingreq) Info() Info {
 }
 
 func (p *Pingresp) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	pingresp := pbx.Pingresp(*p)
 	pkt, err := proto.Marshal(&pingresp)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_PINGRESP, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (p *Pingresp) Encode() []byte {
-	buf, err := p.encode()
+	msg, err := p.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded packet to the underlying writer.
 func (p *Pingresp) WriteTo(w io.Writer) (int64, error) {
-	buf, err := p.encode()
+	msg, err := p.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the packet type.
@@ -201,34 +201,34 @@ func (p *Pingresp) Info() Info {
 }
 
 func (d *Disconnect) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	disc := pbx.Disconnect(*d)
 	pkt, err := proto.Marshal(&disc)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_DISCONNECT, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (d *Disconnect) Encode() []byte {
-	buf, err := d.encode()
+	msg, err := d.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded packet to the underlying writer.
 func (d *Disconnect) WriteTo(w io.Writer) (int64, error) {
-	buf, err := d.encode()
+	msg, err := d.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the packet type.

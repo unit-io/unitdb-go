@@ -23,7 +23,7 @@ type (
 )
 
 func (s *Subscribe) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	var subs []*pbx.Subscriber
 	for _, sub := range s.Subscribers {
 		s := pbx.Subscriber(*sub)
@@ -35,30 +35,30 @@ func (s *Subscribe) encode() (bytes.Buffer, error) {
 	}
 	pkt, err := proto.Marshal(&sub)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_SUBSCRIBE, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (s *Subscribe) Encode() []byte {
-	buf, err := s.encode()
+	msg, err := s.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded Packet to the underlying writer.
 func (s *Subscribe) WriteTo(w io.Writer) (int64, error) {
-	buf, err := s.encode()
+	msg, err := s.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the Packet type.
@@ -77,34 +77,34 @@ func (s *Subscribe) Info() Info {
 }
 
 func (s *Suback) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	suback := pbx.Suback(*s)
 	pkt, err := proto.Marshal(&suback)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_SUBACK, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (s *Suback) Encode() []byte {
-	buf, err := s.encode()
+	msg, err := s.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded Packet to the underlying writer.
 func (s *Suback) WriteTo(w io.Writer) (int64, error) {
-	buf, err := s.encode()
+	msg, err := s.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the Packet type.
@@ -123,7 +123,7 @@ func (s *Suback) Info() Info {
 }
 
 func (u *Unsubscribe) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	var subs []*pbx.Subscriber
 	for _, sub := range u.Subscribers {
 		s := pbx.Subscriber(*sub)
@@ -135,30 +135,30 @@ func (u *Unsubscribe) encode() (bytes.Buffer, error) {
 	}
 	pkt, err := proto.Marshal(&unsub)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBSCRIBE, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (u *Unsubscribe) Encode() []byte {
-	buf, err := u.encode()
+	msg, err := u.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // Write writes the encoded Packet to the underlying writer.
 func (u *Unsubscribe) WriteTo(w io.Writer) (int64, error) {
-	buf, err := u.encode()
+	msg, err := u.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the Packet type.
@@ -177,34 +177,34 @@ func (u *Unsubscribe) Info() Info {
 }
 
 func (u *Unsuback) encode() (bytes.Buffer, error) {
-	var buf bytes.Buffer
+	var msg bytes.Buffer
 	unusuback := pbx.Unsuback(*u)
 	pkt, err := proto.Marshal(&unusuback)
 	if err != nil {
-		return buf, err
+		return msg, err
 	}
 	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBACK, RemainingLength: uint32(len(pkt))}
-	buf = fh.pack()
-	_, err = buf.Write(pkt)
-	return buf, err
+	msg = fh.pack()
+	_, err = msg.Write(pkt)
+	return msg, err
 }
 
 // Encode encodes message into binary data
 func (u *Unsuback) Encode() []byte {
-	buf, err := u.encode()
+	msg, err := u.encode()
 	if err != nil {
 		return nil
 	}
-	return buf.Bytes()
+	return msg.Bytes()
 }
 
 // WriteTo writes the encoded Packet to the underlying writer.
 func (u *Unsuback) WriteTo(w io.Writer) (int64, error) {
-	buf, err := u.encode()
+	msg, err := u.encode()
 	if err != nil {
 		return 0, err
 	}
-	return buf.WriteTo(w)
+	return msg.WriteTo(w)
 }
 
 // Type returns the Packet type.
