@@ -10,7 +10,7 @@ import (
 	unitd "github.com/unit-io/unitd-go"
 )
 
-var f unitd.MessageHandler = func(client unitd.ClientConn, msg unitd.Message) {
+var f unitd.MessageHandler = func(client unitd.Client, msg unitd.Message) {
 	fmt.Printf("TOPIC: %s\n", msg.Topic())
 	fmt.Printf("MSG: %s\n", msg.Payload())
 }

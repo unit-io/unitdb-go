@@ -14,7 +14,7 @@ import (
 	"github.com/unit-io/unitd-go/packets"
 )
 
-var adp adapter.Log
+var adp adapter.Adapter
 
 func open(path string) error {
 	if adp == nil {
@@ -68,7 +68,7 @@ func GetAdapterName() string {
 
 // RegisterAdapter makes a persistence adapter available.
 // If Register is called twice or if the adapter is nil, it panics.
-func RegisterAdapter(name string, l adapter.Log) {
+func RegisterAdapter(name string, l adapter.Adapter) {
 	if l == nil {
 		panic("store: Register adapter is nil")
 	}
@@ -131,7 +131,7 @@ func recovery(path string, size int64, reset bool) error {
 }
 
 // InitMessageStore init message store and start recovery if reset flag is not set.
-func InitMessageStore(path string, size int64, dur time.Duration, reset bool) error {
+func InitMessageStore(ctx context.Context, path string, size int64, dur time.Duration, reset bool) error {
 	if !IsOpen() {
 		if err := open(path); err != nil {
 			return err
@@ -146,8 +146,8 @@ func InitMessageStore(path string, size int64, dur time.Duration, reset bool) er
 	if err := recovery(path, size, reset); err != nil {
 		return err
 	}
-	Log.tinyBatchLoop(15 * time.Millisecond)
-	logReleaser(dur)
+	Log.tinyBatchLoop(ctx, 15*time.Millisecond)
+	logReleaser(ctx, dur)
 	return nil
 }
 
@@ -340,8 +340,7 @@ func timeSeq(dur time.Duration) uint64 {
 }
 
 // tinyBatchLoop handles tiny bacthes write to log.
-func (m *MessageLog) tinyBatchLoop(interval time.Duration) {
-	ctx := context.Background()
+func (m *MessageLog) tinyBatchLoop(ctx context.Context, interval time.Duration) {
 	go func() {
 		tinyBatchWriterTicker := time.NewTicker(interval)
 		defer func() {
@@ -361,8 +360,7 @@ func (m *MessageLog) tinyBatchLoop(interval time.Duration) {
 }
 
 // logs are released from wal if older than a minute.
-func logReleaser(dur time.Duration) {
-	ctx := context.Background()
+func logReleaser(ctx context.Context, dur time.Duration) {
 	go func() {
 		logTicker := time.NewTicker(dur)
 		defer logTicker.Stop()

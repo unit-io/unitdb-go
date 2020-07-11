@@ -27,7 +27,7 @@ const (
 	MasterContract = uint32(3376684800)
 )
 
-type ClientConn interface {
+type Client interface {
 	// Connect will create a connection to the server
 	Connect() error
 	// ConnectContext will create a connection to the server
@@ -51,9 +51,10 @@ type ClientConn interface {
 	// received.
 	Unsubscribe(topics ...[]byte) Result
 }
-type clientConn struct {
+type client struct {
 	mu         sync.Mutex // mutex for the connection
 	opts       *options
+	context    context.Context    // context for the client
 	cancel     context.CancelFunc // cancellation function
 	contract   uint32
 	messageIds          // local identifier of messages
@@ -76,9 +77,12 @@ type clientConn struct {
 	closed uint32
 }
 
-func NewClient(target string, clientID string, opts ...Options) (ClientConn, error) {
-	cc := &clientConn{
+func NewClient(target string, clientID string, opts ...Options) (Client, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &client{
 		opts:       new(options),
+		context:    ctx,
+		cancel:     cancel,
 		contract:   MasterContract,
 		messageIds: messageIds{index: make(map[MID]Result)},
 		send:       make(chan *PacketAndResult, 1), // buffered
@@ -88,26 +92,30 @@ func NewClient(target string, clientID string, opts ...Options) (ClientConn, err
 		// close
 		closeC: make(chan struct{}),
 	}
-	WithDefaultOptions().set(cc.opts)
+	WithDefaultOptions().set(c.opts)
 	for _, opt := range opts {
-		opt.set(cc.opts)
+		opt.set(c.opts)
 	}
 	// set default options
-	cc.opts.addServer(target)
-	cc.opts.setClientID(clientID)
-	cc.callbacks[0] = cc.opts.DefaultMessageHandler
+	c.opts.addServer(target)
+	c.opts.setClientID(clientID)
+	c.callbacks[0] = c.opts.DefaultMessageHandler
 
 	// Open database connection
-	if err := store.Open(cc.opts.StorePath); err != nil {
+	if err := store.Open(c.opts.StorePath); err != nil {
 		return nil, err
 	}
 
 	// Init message store and recover pending messages from log file if reset is set false
-	if err := store.InitMessageStore(cc.opts.StorePath, int64(cc.opts.StoreSize), cc.opts.StoreLogReleaseDuration, false); err != nil {
+	path := c.opts.StorePath
+	if clientID != "" {
+		path = path + "/" + clientID
+	}
+	if err := store.InitMessageStore(c.context, path, int64(c.opts.StoreSize), c.opts.StoreLogReleaseDuration, false); err != nil {
 		return nil, err
 	}
 
-	return cc, nil
+	return c, nil
 }
 
 func StreamConn(
@@ -125,76 +133,78 @@ func StreamConn(
 	}
 }
 
-func (cc *clientConn) close() error {
-	defer cc.conn.Close()
+func (c *client) close() error {
+	defer c.conn.Close()
 
-	if !cc.setClosed() {
+	if !c.setClosed() {
 		return errors.New("error disconnecting client")
 	}
 
 	// Signal all goroutines.
-	close(cc.closeC)
-	// time.Sleep(cc.opts.WriteTimeout)
+	close(c.closeC)
+	// time.Sleep(c.opts.WriteTimeout)
 	// Wait for all goroutines to exit.
-	cc.closeW.Wait()
-	close(cc.send)
-	close(cc.recv)
-	close(cc.pub)
+	c.closeW.Wait()
+	close(c.send)
+	close(c.recv)
+	close(c.pub)
 	store.Close()
-	if cc.cancel != nil {
-		cc.cancel()
+	if c.cancel != nil {
+		c.cancel()
 	}
 	return nil
 }
 
 // Connect will create a connection to the server
-func (cc *clientConn) Connect() error {
-	return cc.ConnectContext(context.Background())
+func (c *client) Connect() error {
+	return c.ConnectContext(c.context)
 }
 
 // ConnectContext will create a connection to the server
 // The context will be used in the grpc stream connection
-func (cc *clientConn) ConnectContext(ctx context.Context) error {
+func (c *client) ConnectContext(ctx context.Context) error {
 	// Connect to the server
-	if len(cc.opts.Servers) == 0 {
+	if len(c.opts.Servers) == 0 {
 		return errors.New("no servers defined to connect to")
 	}
 
-	if cc.opts.ConnectTimeout != 0 {
-		ctx, cc.cancel = context.WithTimeout(ctx, cc.opts.ConnectTimeout)
+	// var cancel context.CancelFunc
+	if c.opts.ConnectTimeout != 0 {
+		ctx, c.cancel = context.WithTimeout(ctx, c.opts.ConnectTimeout)
 	} else {
-		ctx, cc.cancel = context.WithCancel(ctx)
+		ctx, c.cancel = context.WithCancel(ctx)
 	}
-	if err := cc.attemptConnection(ctx); err != nil {
+	// defer cancel()
+	if err := c.attemptConnection(ctx); err != nil {
 		return err
 	}
 
 	// Take care of any messages in the store
-	if !cc.opts.CleanSession {
-		cc.resume(cc.opts.ResumeSubs)
+	if !c.opts.CleanSession {
+		c.resume(c.opts.ResumeSubs)
 	} else {
 		// contract is used as blockId and key prefix
-		store.Log.Reset(cc.contract)
+		store.Log.Reset(c.contract)
 	}
-	if cc.opts.KeepAlive != 0 {
-		cc.updateLastAction()
-		cc.updateLastTouched()
-		go cc.keepalive(ctx)
+	if c.opts.KeepAlive != 0 {
+		c.updateLastAction()
+		c.updateLastTouched()
+		go c.keepalive(ctx)
 	}
-	go cc.readLoop(ctx)   // process incoming messages
-	go cc.writeLoop(ctx)  // send messages to servers
-	go cc.dispatcher(ctx) // dispatch messages to client
+	go c.readLoop(ctx)   // process incoming messages
+	go c.writeLoop(ctx)  // send messages to servers
+	go c.dispatcher(ctx) // dispatch messages to client
 
 	return nil
 }
 
-func (cc *clientConn) attemptConnection(ctx context.Context) error {
-	for _, url := range cc.opts.Servers {
+func (c *client) attemptConnection(ctx context.Context) error {
+	for _, url := range c.opts.Servers {
 		conn, err := grpc.Dial(
 			url.Host,
 			grpc.WithBlock(),
 			grpc.WithInsecure(),
-			grpc.WithTimeout(cc.opts.ConnectTimeout),
+			grpc.WithTimeout(c.opts.ConnectTimeout),
 		)
 		if err != nil {
 			return err
@@ -205,51 +215,51 @@ func (cc *clientConn) attemptConnection(ctx context.Context) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		cc.conn = StreamConn(stream)
+		c.conn = StreamConn(stream)
 
 		// get Connect message from options.
-		cm := newConnectMsgFromOptions(cc.opts, url)
-		rc, connId, _ := Connect(cc.conn, cm)
+		cm := newConnectMsgFromOptions(c.opts, url)
+		rc, connId, _ := Connect(c.conn, cm)
 		if rc == packets.Accepted {
-			cc.connID = connId
-			cc.messageIds.reset(MID(cc.connID))
+			c.connID = connId
+			c.messageIds.reset(MID(c.connID))
 			break // successfully connected
 		}
-		if cc.conn != nil {
-			cc.DisconnectContext(ctx)
+		if c.conn != nil {
+			c.DisconnectContext(ctx)
 		}
 	}
 	return nil
 }
 
 // Disconnect will disconnect the connection to the server
-func (cc *clientConn) Disconnect() error {
-	return cc.DisconnectContext(context.Background())
+func (c *client) Disconnect() error {
+	return c.DisconnectContext(context.Background())
 }
 
 // Disconnect will disconnect the connection to the server
-func (cc *clientConn) DisconnectContext(ctx context.Context) error {
-	if err := cc.ok(); err != nil {
+func (c *client) DisconnectContext(ctx context.Context) error {
+	if err := c.ok(); err != nil {
 		// Disconnect() called but not connected
 		return nil
 	}
-	defer cc.close()
+	defer c.close()
 	p := &packets.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
-	cc.send <- &PacketAndResult{p: p, r: r}
-	_, err := r.Get(ctx, cc.opts.WriteTimeout)
+	c.send <- &PacketAndResult{p: p, r: r}
+	_, err := r.Get(ctx, c.opts.WriteTimeout)
 	return err
 }
 
 // internalConnLost cleanup when connection is lost or an error occurs
-func (cc *clientConn) internalConnLost(err error) {
+func (c *client) internalConnLost(err error) {
 	// It is possible that internalConnLost will be called multiple times simultaneously
 	// (including after sending a DisconnectPacket) as such we only do cleanup etc if the
 	// routines were actually running and are not being disconnected at users request
-	defer cc.close()
-	if err := cc.ok(); err == nil {
-		if cc.opts.ConnectionLostHandler != nil {
-			go cc.opts.ConnectionLostHandler(cc, err)
+	defer c.close()
+	if err := c.ok(); err == nil {
+		if c.opts.ConnectionLostHandler != nil {
+			go c.opts.ConnectionLostHandler(c, err)
 		}
 	}
 
@@ -258,9 +268,9 @@ func (cc *clientConn) internalConnLost(err error) {
 
 // Publish will publish a message with the specified QoS and content
 // to the specified topic.
-func (cc *clientConn) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
+func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
 	r := &PublishResult{result: result{complete: make(chan struct{})}}
-	if err := cc.ok(); err != nil {
+	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
 		return r
 	}
@@ -277,15 +287,15 @@ func (cc *clientConn) Publish(topic, payload []byte, pubOpts ...PubOptions) Resu
 	pub.Qos = opts.Qos
 
 	if fh.Qos != 0 && pub.MessageID == 0 {
-		mID := cc.nextID(r)
-		pub.MessageID = cc.outboundID(mID)
+		mID := c.nextID(r)
+		pub.MessageID = c.outboundID(mID)
 	}
-	publishWaitTimeout := cc.opts.WriteTimeout
+	publishWaitTimeout := c.opts.WriteTimeout
 	if publishWaitTimeout == 0 {
-		publishWaitTimeout = cc.opts.WriteTimeout
+		publishWaitTimeout = c.opts.WriteTimeout
 	}
 	select {
-	case cc.send <- &PacketAndResult{p: pub, r: r}:
+	case c.send <- &PacketAndResult{p: pub, r: r}:
 	case <-time.After(publishWaitTimeout):
 		r.setError(errors.New("publish timeout error occurred"))
 		return r
@@ -295,9 +305,9 @@ func (cc *clientConn) Publish(topic, payload []byte, pubOpts ...PubOptions) Resu
 
 // Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
-func (cc *clientConn) Subscribe(topic []byte, subOpts ...SubOptions) Result {
+func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
-	if err := cc.ok(); err != nil {
+	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
 		return r
 	}
@@ -313,15 +323,15 @@ func (cc *clientConn) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	}
 
 	if sub.MessageID == 0 {
-		mID := cc.nextID(r)
-		sub.MessageID = cc.outboundID(mID)
+		mID := c.nextID(r)
+		sub.MessageID = c.outboundID(mID)
 	}
-	subscribeWaitTimeout := cc.opts.WriteTimeout
+	subscribeWaitTimeout := c.opts.WriteTimeout
 	if subscribeWaitTimeout == 0 {
 		subscribeWaitTimeout = time.Second * 30
 	}
 	select {
-	case cc.send <- &PacketAndResult{p: sub, r: r}:
+	case c.send <- &PacketAndResult{p: sub, r: r}:
 	case <-time.After(subscribeWaitTimeout):
 		r.setError(errors.New("subscribe timeout error occurred"))
 		return r
@@ -333,7 +343,7 @@ func (cc *clientConn) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 // Unsubscribe will end the subscription from each of the topics provided.
 // Messages published to those topics from other clients will no longer be
 // received.
-func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
+func (c *client) Unsubscribe(topics ...[]byte) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	unsub := &packets.Unsubscribe{}
 	var subs []*packets.Subscriber
@@ -344,15 +354,15 @@ func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
 	}
 	unsub.Subscribers = subs
 	if unsub.MessageID == 0 {
-		mID := cc.nextID(r)
-		unsub.MessageID = cc.outboundID(mID)
+		mID := c.nextID(r)
+		unsub.MessageID = c.outboundID(mID)
 	}
-	unsubscribeWaitTimeout := cc.opts.WriteTimeout
+	unsubscribeWaitTimeout := c.opts.WriteTimeout
 	if unsubscribeWaitTimeout == 0 {
 		unsubscribeWaitTimeout = time.Second * 30
 	}
 	select {
-	case cc.send <- &PacketAndResult{p: unsub, r: r}:
+	case c.send <- &PacketAndResult{p: unsub, r: r}:
 	case <-time.After(unsubscribeWaitTimeout):
 		r.setError(errors.New("unsubscribe timeout error occurred"))
 		return r
@@ -361,9 +371,9 @@ func (cc *clientConn) Unsubscribe(topics ...[]byte) Result {
 }
 
 // Load all stored messages and resend them to ensure QOS > 1,2 even after an application crash.
-func (cc *clientConn) resume(subscription bool) {
+func (c *client) resume(subscription bool) {
 	// contract is used as blockId and key prefix
-	keys := store.Log.Keys(cc.contract)
+	keys := store.Log.Keys(c.contract)
 	for _, k := range keys {
 		msg := store.Log.Get(k)
 		if msg == nil {
@@ -386,29 +396,29 @@ func (cc *clientConn) resume(subscription bool) {
 						topics = append(topics, t)
 					}
 					r.subs = append(r.subs, topics...)
-					//cc.claimID(token, details.MessageID)
-					cc.send <- &PacketAndResult{p: msg, r: r}
+					//c.claimID(token, details.MessageID)
+					c.send <- &PacketAndResult{p: msg, r: r}
 				}
 			case *packets.Unsubscribe:
 				if subscription {
 					r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
-					cc.send <- &PacketAndResult{p: msg, r: r}
+					c.send <- &PacketAndResult{p: msg, r: r}
 				}
 
 			case *packets.Pubrel:
-				cc.send <- &PacketAndResult{p: msg, r: nil}
+				c.send <- &PacketAndResult{p: msg, r: nil}
 			case *packets.Publish:
 				r := &PublishResult{result: result{complete: make(chan struct{})}}
 				r.messageID = info.MessageID
-				// cc.claimID(token, details.MessageID)
-				cc.send <- &PacketAndResult{p: msg, r: r}
+				// c.claimID(token, details.MessageID)
+				c.send <- &PacketAndResult{p: msg, r: r}
 			default:
 				store.Log.Delete(k)
 			}
 		} else {
 			switch msg.(type) {
 			case *packets.Pubrel:
-				cc.recv <- msg
+				c.recv <- msg
 			default:
 				store.Log.Delete(k)
 			}
@@ -421,49 +431,49 @@ func TimeNow() time.Time {
 	return time.Now().UTC().Round(time.Millisecond)
 }
 
-func (cc *clientConn) inboundID(id uint32) MID {
-	// return MID(cc.connID - ((id << 4) | uint32(1)))
-	return MID(cc.connID - id)
+func (c *client) inboundID(id uint32) MID {
+	// return MID(c.connID - ((id << 4) | uint32(1)))
+	return MID(c.connID - id)
 }
 
-func (cc *clientConn) outboundID(mid MID) (id uint32) {
-	// return cc.connID - ((uint32(mid) << 4) | uint32(0))
-	return cc.connID - (uint32(mid))
+func (c *client) outboundID(mid MID) (id uint32) {
+	// return c.connID - ((uint32(mid) << 4) | uint32(0))
+	return c.connID - (uint32(mid))
 }
 
-func (cc *clientConn) updateLastAction() {
-	if cc.opts.KeepAlive != 0 {
-		cc.lastAction.Store(TimeNow())
+func (c *client) updateLastAction() {
+	if c.opts.KeepAlive != 0 {
+		c.lastAction.Store(TimeNow())
 	}
 }
 
-func (cc *clientConn) updateLastTouched() {
-	cc.lastTouched.Store(TimeNow())
+func (c *client) updateLastTouched() {
+	c.lastTouched.Store(TimeNow())
 }
 
-func (cc *clientConn) storeInbound(m packets.Packet) {
-	k := uint64(cc.inboundID(m.Info().MessageID))<<32 + uint64(cc.contract)
+func (c *client) storeInbound(m packets.Packet) {
+	k := uint64(c.inboundID(m.Info().MessageID))<<32 + uint64(c.contract)
 	store.Log.PersistInbound(k, m)
 }
 
-func (cc *clientConn) storeOutbound(m packets.Packet) {
-	k := uint64(m.Info().MessageID)<<32 + uint64(cc.contract)
+func (c *client) storeOutbound(m packets.Packet) {
+	k := uint64(m.Info().MessageID)<<32 + uint64(c.contract)
 	store.Log.PersistOutbound(k, m)
 }
 
 // Set closed flag; return true if not already closed.
-func (cc *clientConn) setClosed() bool {
-	return atomic.CompareAndSwapUint32(&cc.closed, 0, 1)
+func (c *client) setClosed() bool {
+	return atomic.CompareAndSwapUint32(&c.closed, 0, 1)
 }
 
 // Check whether connection was closed.
-func (cc *clientConn) isClosed() bool {
-	return atomic.LoadUint32(&cc.closed) != 0
+func (c *client) isClosed() bool {
+	return atomic.LoadUint32(&c.closed) != 0
 }
 
 // Check read ok status.
-func (cc *clientConn) ok() error {
-	if cc.isClosed() {
+func (c *client) ok() error {
+	if c.isClosed() {
 		return errors.New("client connection is closed.")
 	}
 	return nil

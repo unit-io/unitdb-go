@@ -67,13 +67,13 @@ func main() {
 			// unitd.WithInsecure(),
 			unitd.WithUserNamePassword(*user, *password),
 			unitd.WithCleanSession(),
-			unitd.WithConnectionLostHandler(func(client unitd.ClientConn, err error) {
+			unitd.WithConnectionLostHandler(func(client unitd.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitd.WithDefaultMessageHandler(func(client unitd.ClientConn, msg unitd.Message) {
+			unitd.WithDefaultMessageHandler(func(client unitd.Client, msg unitd.Message) {
 				recv <- [2][]byte{msg.Topic(), msg.Payload()}
 			}),
 		)
@@ -150,13 +150,13 @@ func main() {
 			// unitd.WithInsecure(),
 			unitd.WithUserNamePassword(*user, *password),
 			unitd.WithCleanSession(),
-			unitd.WithConnectionLostHandler(func(client unitd.ClientConn, err error) {
+			unitd.WithConnectionLostHandler(func(client unitd.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitd.WithDefaultMessageHandler(func(client unitd.ClientConn, msg unitd.Message) {
+			unitd.WithDefaultMessageHandler(func(client unitd.Client, msg unitd.Message) {
 				recv <- [2][]byte{msg.Topic(), msg.Payload()}
 			}),
 		)

@@ -1,8 +1,8 @@
 package adapter
 
-// Log represents a message storage contract that message storage provides
+// Adapter represents a message storage contract that message storage provides
 // must fulfill.
-type Log interface {
+type Adapter interface {
 	// Open and configure the adapter
 	Open(path string) error
 	// Close the adapter

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultDatabase = "messages"
+	defaultMessageStore = "messages"
 
 	dbVersion = 1.0
 
@@ -146,7 +146,13 @@ func (a *adapter) SignalLogApplied(seq uint64) error {
 // Recovery recovers pending messages from log file.
 func (a *adapter) Recovery(path string, size int64, reset bool) (map[uint64][]byte, error) {
 	m := make(map[uint64][]byte) // map[key]msg
-	logOpts := wal.Options{Path: path + "/" + defaultDatabase + logPostfix, TargetSize: size, BufferSize: size}
+
+	// Make sure we have a directory
+	if err := os.MkdirAll(path, 0777); err != nil {
+		return m, errors.New("adapter.Open, Unable to create db dir")
+	}
+
+	logOpts := wal.Options{Path: path + "/" + defaultMessageStore + logPostfix, TargetSize: size, BufferSize: size}
 	wal, needLogRecovery, err := wal.New(logOpts)
 	if err != nil {
 		wal.Close()

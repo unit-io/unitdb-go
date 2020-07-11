@@ -11,14 +11,14 @@ import (
 // MessageHandler is a callback type which can be set to be
 // executed upon the arrival of messages published to topics
 // to which the client is subscribed.
-type MessageHandler func(ClientConn, Message)
+type MessageHandler func(Client, Message)
 
 // ConnectionHandler is a callback that is called when connection to the server is established.
-type ConnectionHandler func(ClientConn)
+type ConnectionHandler func(Client)
 
 // ConnectionLostHandler is a callback that is set to be executed
 // upon an uninteded disconnection from server.
-type ConnectionLostHandler func(ClientConn, error)
+type ConnectionLostHandler func(Client, error)
 
 type options struct {
 	Servers                 []*url.URL
