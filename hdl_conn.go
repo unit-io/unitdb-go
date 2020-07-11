@@ -184,10 +184,10 @@ func (c *client) keepalive(ctx context.Context) {
 	var pingInterval int64
 	var pingSent time.Time
 
-	if c.opts.KeepAlive > 10 {
+	if c.opts.keepAlive > 10 {
 		pingInterval = 5
 	} else {
-		pingInterval = c.opts.KeepAlive / 2
+		pingInterval = c.opts.keepAlive / 2
 	}
 
 	pingTicker := time.NewTicker(time.Duration(pingInterval * int64(time.Second)))
@@ -202,8 +202,8 @@ func (c *client) keepalive(ctx context.Context) {
 		case <-pingTicker.C:
 			lastAction := c.lastAction.Load().(time.Time)
 			lastTouched := c.lastTouched.Load().(time.Time)
-			live := TimeNow().Add(-time.Duration(c.opts.KeepAlive * int64(time.Second)))
-			timeout := TimeNow().Add(-c.opts.PingTimeout)
+			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int64(time.Second)))
+			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
 			if lastAction.After(live) && lastTouched.Before(timeout) {
 				ping := packets.Pingreq{}

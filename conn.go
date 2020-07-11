@@ -99,19 +99,19 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 	// set default options
 	c.opts.addServer(target)
 	c.opts.setClientID(clientID)
-	c.callbacks[0] = c.opts.DefaultMessageHandler
+	c.callbacks[0] = c.opts.defaultMessageHandler
 
 	// Open database connection
-	if err := store.Open(c.opts.StorePath); err != nil {
+	if err := store.Open(c.opts.storePath); err != nil {
 		return nil, err
 	}
 
 	// Init message store and recover pending messages from log file if reset is set false
-	path := c.opts.StorePath
+	path := c.opts.storePath
 	if clientID != "" {
 		path = path + "/" + clientID
 	}
-	if err := store.InitMessageStore(c.context, path, int64(c.opts.StoreSize), c.opts.StoreLogReleaseDuration, false); err != nil {
+	if err := store.InitMessageStore(c.context, path, int64(c.opts.storeSize), c.opts.storeLogReleaseDuration, false); err != nil {
 		return nil, err
 	}
 
@@ -164,13 +164,13 @@ func (c *client) Connect() error {
 // The context will be used in the grpc stream connection
 func (c *client) ConnectContext(ctx context.Context) error {
 	// Connect to the server
-	if len(c.opts.Servers) == 0 {
+	if len(c.opts.servers) == 0 {
 		return errors.New("no servers defined to connect to")
 	}
 
 	// var cancel context.CancelFunc
-	if c.opts.ConnectTimeout != 0 {
-		ctx, c.cancel = context.WithTimeout(ctx, c.opts.ConnectTimeout)
+	if c.opts.connectTimeout != 0 {
+		ctx, c.cancel = context.WithTimeout(ctx, c.opts.connectTimeout)
 	} else {
 		ctx, c.cancel = context.WithCancel(ctx)
 	}
@@ -180,13 +180,13 @@ func (c *client) ConnectContext(ctx context.Context) error {
 	}
 
 	// Take care of any messages in the store
-	if !c.opts.CleanSession {
-		c.resume(c.opts.ResumeSubs)
+	if !c.opts.cleanSession {
+		c.resume(c.opts.resumeSubs)
 	} else {
 		// contract is used as blockId and key prefix
 		store.Log.Reset(c.contract)
 	}
-	if c.opts.KeepAlive != 0 {
+	if c.opts.keepAlive != 0 {
 		c.updateLastAction()
 		c.updateLastTouched()
 		go c.keepalive(ctx)
@@ -199,12 +199,12 @@ func (c *client) ConnectContext(ctx context.Context) error {
 }
 
 func (c *client) attemptConnection(ctx context.Context) error {
-	for _, url := range c.opts.Servers {
+	for _, url := range c.opts.servers {
 		conn, err := grpc.Dial(
 			url.Host,
 			grpc.WithBlock(),
 			grpc.WithInsecure(),
-			grpc.WithTimeout(c.opts.ConnectTimeout),
+			grpc.WithTimeout(c.opts.connectTimeout),
 		)
 		if err != nil {
 			return err
@@ -247,7 +247,7 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 	p := &packets.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
 	c.send <- &PacketAndResult{p: p, r: r}
-	_, err := r.Get(ctx, c.opts.WriteTimeout)
+	_, err := r.Get(ctx, c.opts.writeTimeout)
 	return err
 }
 
@@ -258,8 +258,8 @@ func (c *client) internalConnLost(err error) {
 	// routines were actually running and are not being disconnected at users request
 	defer c.close()
 	if err := c.ok(); err == nil {
-		if c.opts.ConnectionLostHandler != nil {
-			go c.opts.ConnectionLostHandler(c, err)
+		if c.opts.connectionLostHandler != nil {
+			go c.opts.connectionLostHandler(c, err)
 		}
 	}
 
@@ -280,19 +280,19 @@ func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
 		opt.set(opts)
 	}
 
-	fh := packets.FixedHeader{Qos: opts.Qos, Retain: opts.Retained}
+	fh := packets.FixedHeader{Qos: opts.qos, Retain: opts.retained}
 	pub := &packets.Publish{}
 	pub.Topic = topic
 	pub.Payload = payload
-	pub.Qos = opts.Qos
+	pub.Qos = opts.qos
 
 	if fh.Qos != 0 && pub.MessageID == 0 {
 		mID := c.nextID(r)
 		pub.MessageID = c.outboundID(mID)
 	}
-	publishWaitTimeout := c.opts.WriteTimeout
+	publishWaitTimeout := c.opts.writeTimeout
 	if publishWaitTimeout == 0 {
-		publishWaitTimeout = c.opts.WriteTimeout
+		publishWaitTimeout = c.opts.writeTimeout
 	}
 	select {
 	case c.send <- &PacketAndResult{p: pub, r: r}:
@@ -317,16 +317,16 @@ func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	}
 
 	sub := &packets.Subscribe{}
-	sub.Subscribers = append(sub.Subscribers, &packets.Subscriber{Topic: topic, Qos: opts.Qos})
+	sub.Subscribers = append(sub.Subscribers, &packets.Subscriber{Topic: topic, Qos: opts.qos})
 
-	if opts.Callback != nil {
+	if opts.callback != nil {
 	}
 
 	if sub.MessageID == 0 {
 		mID := c.nextID(r)
 		sub.MessageID = c.outboundID(mID)
 	}
-	subscribeWaitTimeout := c.opts.WriteTimeout
+	subscribeWaitTimeout := c.opts.writeTimeout
 	if subscribeWaitTimeout == 0 {
 		subscribeWaitTimeout = time.Second * 30
 	}
@@ -357,7 +357,7 @@ func (c *client) Unsubscribe(topics ...[]byte) Result {
 		mID := c.nextID(r)
 		unsub.MessageID = c.outboundID(mID)
 	}
-	unsubscribeWaitTimeout := c.opts.WriteTimeout
+	unsubscribeWaitTimeout := c.opts.writeTimeout
 	if unsubscribeWaitTimeout == 0 {
 		unsubscribeWaitTimeout = time.Second * 30
 	}
@@ -442,7 +442,7 @@ func (c *client) outboundID(mid MID) (id uint32) {
 }
 
 func (c *client) updateLastAction() {
-	if c.opts.KeepAlive != 0 {
+	if c.opts.keepAlive != 0 {
 		c.lastAction.Store(TimeNow())
 	}
 }

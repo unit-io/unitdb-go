@@ -68,12 +68,12 @@ func messageFromPublish(p *packets.Publish, ack func()) Message {
 func newConnectMsgFromOptions(opts *options, server *url.URL) *packets.Connect {
 	m := &packets.Connect{}
 
-	m.CleanSessFlag = opts.CleanSession
-	m.ClientID = []byte(opts.ClientID)
-	m.InsecureFlag = opts.InsecureFlag
+	m.CleanSessFlag = opts.cleanSession
+	m.ClientID = []byte(opts.clientID)
+	m.InsecureFlag = opts.insecureFlag
 
-	username := opts.Username
-	password := opts.Password
+	username := opts.username
+	password := opts.password
 	if server.User != nil {
 		username = server.User.Username()
 		if pwd, ok := server.User.Password(); ok {
@@ -91,7 +91,7 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *packets.Connect {
 		}
 	}
 
-	m.KeepAlive = uint32(opts.KeepAlive)
+	m.KeepAlive = uint32(opts.keepAlive)
 
 	return m
 }

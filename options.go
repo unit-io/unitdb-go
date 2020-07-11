@@ -21,24 +21,24 @@ type ConnectionHandler func(Client)
 type ConnectionLostHandler func(Client, error)
 
 type options struct {
-	Servers                 []*url.URL
-	ClientID                string
-	InsecureFlag            bool
-	Username                string
-	Password                string
-	CleanSession            bool
-	TLSConfig               *tls.Config
-	KeepAlive               int64
-	PingTimeout             time.Duration
-	ConnectTimeout          time.Duration
-	StorePath               string
-	StoreSize               int
-	StoreLogReleaseDuration time.Duration
-	DefaultMessageHandler   MessageHandler
-	ConnectionHandler       ConnectionHandler
-	ConnectionLostHandler   ConnectionLostHandler
-	WriteTimeout            time.Duration
-	ResumeSubs              bool
+	servers                 []*url.URL
+	clientID                string
+	insecureFlag            bool
+	username                string
+	password                string
+	cleanSession            bool
+	tLSConfig               *tls.Config
+	keepAlive               int64
+	pingTimeout             time.Duration
+	connectTimeout          time.Duration
+	storePath               string
+	storeSize               int
+	storeLogReleaseDuration time.Duration
+	defaultMessageHandler   MessageHandler
+	connectionHandler       ConnectionHandler
+	connectionLostHandler   ConnectionLostHandler
+	writeTimeout            time.Duration
+	resumeSubs              bool
 }
 
 func (o *options) addServer(target string) {
@@ -54,11 +54,11 @@ func (o *options) addServer(target string) {
 	if err != nil {
 		return
 	}
-	o.Servers = append(o.Servers, uri)
+	o.servers = append(o.servers, uri)
 }
 
 func (o *options) setClientID(clientID string) {
-	o.ClientID = clientID
+	o.clientID = clientID
 }
 
 // Options it contains configurable options for client
@@ -88,24 +88,24 @@ func newFuncOption(f func(*options)) *fOption {
 //   ConnectTimeout: 30 (seconds)
 func WithDefaultOptions() Options {
 	return newFuncOption(func(o *options) {
-		o.Servers = nil
-		o.ClientID = ""
-		o.InsecureFlag = false
-		o.Username = ""
-		o.Password = ""
-		o.CleanSession = true
-		o.KeepAlive = 60
-		o.PingTimeout = 60 * time.Second
-		o.ConnectTimeout = 60 * time.Second
-		o.WriteTimeout = 60 * time.Second // 0 represents timeout disabled
-		o.StorePath = "/tmp/unitdb"
-		o.StoreSize = 1 << 27
-		if o.WriteTimeout > 0 {
-			o.StoreLogReleaseDuration = o.WriteTimeout
+		o.servers = nil
+		o.clientID = ""
+		o.insecureFlag = false
+		o.username = ""
+		o.password = ""
+		o.cleanSession = true
+		o.keepAlive = 60
+		o.pingTimeout = 60 * time.Second
+		o.connectTimeout = 60 * time.Second
+		o.writeTimeout = 60 * time.Second // 0 represents timeout disabled
+		o.storePath = "/tmp/unitdb"
+		o.storeSize = 1 << 27
+		if o.writeTimeout > 0 {
+			o.storeLogReleaseDuration = o.writeTimeout
 		} else {
-			o.StoreLogReleaseDuration = 1 * time.Minute // must be greater than WriteTimeout
+			o.storeLogReleaseDuration = 1 * time.Minute // must be greater than WriteTimeout
 		}
-		o.ResumeSubs = false
+		o.resumeSubs = false
 	})
 }
 
@@ -124,14 +124,14 @@ func AddServer(target string) Options {
 		if err != nil {
 			return
 		}
-		o.Servers = append(o.Servers, uri)
+		o.servers = append(o.servers, uri)
 	})
 }
 
 // WithClientID  returns an Option which makes client connection and set ClientID
 func WithClientID(clientID string) Options {
 	return newFuncOption(func(o *options) {
-		o.ClientID = clientID
+		o.clientID = clientID
 	})
 }
 
@@ -140,22 +140,22 @@ func WithClientID(clientID string) Options {
 // Use insecure flag only for test and debug connection and not for live client.
 func WithInsecure() Options {
 	return newFuncOption(func(o *options) {
-		o.InsecureFlag = true
+		o.insecureFlag = true
 	})
 }
 
 // WithUserName returns an Option which makes client connection and pass UserName
 func WithUserNamePassword(userName, password string) Options {
 	return newFuncOption(func(o *options) {
-		o.Username = userName
-		o.Password = password
+		o.username = userName
+		o.password = password
 	})
 }
 
 // WithCleanSession returns an Option which makes client connection and set CleanSession
 func WithCleanSession() Options {
 	return newFuncOption(func(o *options) {
-		o.CleanSession = true
+		o.cleanSession = true
 	})
 }
 
@@ -163,7 +163,7 @@ func WithCleanSession() Options {
 // to server.
 func WithTLSConfig(t *tls.Config) Options {
 	return newFuncOption(func(o *options) {
-		o.TLSConfig = t
+		o.tLSConfig = t
 	})
 }
 
@@ -173,7 +173,7 @@ func WithTLSConfig(t *tls.Config) Options {
 // server.
 func WithKeepAlive(k time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		o.KeepAlive = int64(k / time.Second)
+		o.keepAlive = int64(k / time.Second)
 	})
 }
 
@@ -182,7 +182,7 @@ func WithKeepAlive(k time.Duration) Options {
 // that the connection has been lost. Default is 10 seconds.
 func WithPingTimeout(k time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		o.PingTimeout = k
+		o.pingTimeout = k
 	})
 }
 
@@ -190,7 +190,7 @@ func WithPingTimeout(k time.Duration) Options {
 // timeout error. A duration of 0 never times out. Default never times out
 func WithWriteTimeout(t time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		o.WriteTimeout = t
+		o.writeTimeout = t
 	})
 }
 
@@ -199,29 +199,29 @@ func WithWriteTimeout(t time.Duration) Options {
 // Default 30 seconds.
 func WithConnectTimeout(t time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		o.ConnectTimeout = t
+		o.connectTimeout = t
 	})
 }
 
 // WithStoreDir sets database directory.
 func WithStorePath(path string) Options {
 	return newFuncOption(func(o *options) {
-		o.StorePath = path
+		o.storePath = path
 	})
 }
 
 // WithStoreSize sets buffer size store will use to write messages into log.
 func WithStoreSize(size int) Options {
 	return newFuncOption(func(o *options) {
-		o.StoreSize = size
+		o.storeSize = size
 	})
 }
 
 // WithStoreLogReleaseDuration sets log release duration, it must be greater than WriteTimeout.
 func WithStoreLogReleaseDuration(dur time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		if dur > o.WriteTimeout {
-			o.StoreLogReleaseDuration = dur
+		if dur > o.writeTimeout {
+			o.storeLogReleaseDuration = dur
 		}
 	})
 }
@@ -230,14 +230,14 @@ func WithStoreLogReleaseDuration(dur time.Duration) Options {
 // on message receive to all topics client has subscribed to.
 func WithDefaultMessageHandler(defaultHandler MessageHandler) Options {
 	return newFuncOption(func(o *options) {
-		o.DefaultMessageHandler = defaultHandler
+		o.defaultMessageHandler = defaultHandler
 	})
 }
 
 // WithConnectionHandler set handler function to be called when client is connected.
 func WithConnectionHandler(handler ConnectionHandler) Options {
 	return newFuncOption(func(o *options) {
-		o.ConnectionHandler = handler
+		o.connectionHandler = handler
 	})
 }
 
@@ -245,7 +245,7 @@ func WithConnectionHandler(handler ConnectionHandler) Options {
 // when connection to the client is lost.
 func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 	return newFuncOption(func(o *options) {
-		o.ConnectionLostHandler = handler
+		o.connectionLostHandler = handler
 	})
 }
 
@@ -253,14 +253,14 @@ func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 // when connecting but not reconnecting if CleanSession is false.
 func WithResumeSubs() Options {
 	return newFuncOption(func(o *options) {
-		o.ResumeSubs = true
+		o.resumeSubs = true
 	})
 }
 
 // -------------------------------------------------------------
 type pubOptions struct {
-	Qos      uint32
-	Retained bool
+	qos      uint32
+	retained bool
 }
 
 // SubOptions it contains configurable options for Subscribe
@@ -286,20 +286,20 @@ func newFuncPubOption(f func(*pubOptions)) *fPubOption {
 
 func WithPubQos(qos uint32) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
-		o.Qos = qos
+		o.qos = qos
 	})
 }
 
 func WithRetained() PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
-		o.Retained = true
+		o.retained = true
 	})
 }
 
 // -------------------------------------------------------------
 type subOptions struct {
-	Qos      uint32
-	Callback MessageHandler
+	qos      uint32
+	callback MessageHandler
 }
 
 // SubOptions it contains configurable options for Subscribe
@@ -325,7 +325,7 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 
 func WithSubQos(qos uint32) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
-		o.Qos = qos
+		o.qos = qos
 	})
 }
 
@@ -333,6 +333,6 @@ func WithSubQos(qos uint32) SubOptions {
 // upon receiving published message for topic client has Subscribed to.
 func WithCallback(handler MessageHandler) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
-		o.Callback = handler
+		o.callback = handler
 	})
 }
