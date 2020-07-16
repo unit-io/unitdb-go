@@ -16,10 +16,11 @@ import (
 // conn - Connected net.Conn
 // cm - Connect Packet
 func Connect(conn net.Conn, cm *packets.Connect) (uint32, uint32, bool) {
-	if _, err := cm.WriteTo(conn); err != nil {
+	m, err := packets.Encode(cm)
+	if err != nil {
 		fmt.Println(err)
 	}
-
+	conn.Write(m.Bytes())
 	rc, cid, sessionPresent := verifyCONNACK(conn)
 	return rc, cid, sessionPresent
 }
@@ -104,7 +105,7 @@ func (c *client) handler(msg packets.Packet) error {
 		c.getType(mId).flowComplete()
 		c.freeID(mId)
 	case *packets.Pubrec:
-		p := packets.Packet(&packets.Pubrel{MessageID: m.MessageID})
+		p := packets.Packet(&packets.Pubrel{MessageID: m.MessageID, Qos: m.Qos})
 		c.send <- &PacketAndResult{p: p}
 	case *packets.Pubrel:
 		p := packets.Packet(&packets.Pubcomp{MessageID: m.MessageID})
@@ -147,7 +148,12 @@ func (c *client) writeLoop(ctx context.Context) {
 				mId := c.inboundID(m.MessageID)
 				c.freeID(mId)
 			}
-			msg.p.WriteTo(c.conn)
+			m, err := packets.Encode(msg.p)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			c.conn.Write(m.Bytes())
 		}
 	}
 }
@@ -206,10 +212,12 @@ func (c *client) keepalive(ctx context.Context) {
 			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
 			if lastAction.After(live) && lastTouched.Before(timeout) {
-				ping := packets.Pingreq{}
-				if _, err := ping.WriteTo(c.conn); err != nil {
+				ping := &packets.Pingreq{}
+				m, err := packets.Encode(ping)
+				if err != nil {
 					fmt.Println(err)
 				}
+				c.conn.Write(m.Bytes())
 				pingSent = TimeNow()
 			}
 			if lastTouched.Before(timeout) && pingSent.Before(timeout) {

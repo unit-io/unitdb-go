@@ -2,7 +2,6 @@ package packets
 
 import (
 	"bytes"
-	"io"
 
 	"github.com/golang/protobuf/proto"
 	pbx "github.com/unit-io/unitd/proto"
@@ -22,7 +21,7 @@ type (
 	Unsuback pbx.Unsuback
 )
 
-func (s *Subscribe) encode() (bytes.Buffer, error) {
+func encodeSubscribe(s Subscribe) (bytes.Buffer, error) {
 	var msg bytes.Buffer
 	var subs []*pbx.Subscriber
 	for _, sub := range s.Subscribers {
@@ -43,32 +42,9 @@ func (s *Subscribe) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (s *Subscribe) Encode() []byte {
-	msg, err := s.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded Packet to the underlying writer.
-func (s *Subscribe) WriteTo(w io.Writer) (int64, error) {
-	msg, err := s.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the Packet type.
 func (s *Subscribe) Type() MessageType {
 	return MessageType(pbx.MessageType_SUBSCRIBE)
-}
-
-// String returns the name of operation.
-func (s *Subscribe) String() string {
-	return "sub"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -76,9 +52,9 @@ func (s *Subscribe) Info() Info {
 	return Info{Qos: 1, MessageID: s.MessageID}
 }
 
-func (s *Suback) encode() (bytes.Buffer, error) {
+func encodeSuback(s Suback) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	suback := pbx.Suback(*s)
+	suback := pbx.Suback(s)
 	pkt, err := proto.Marshal(&suback)
 	if err != nil {
 		return msg, err
@@ -89,32 +65,9 @@ func (s *Suback) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (s *Suback) Encode() []byte {
-	msg, err := s.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded Packet to the underlying writer.
-func (s *Suback) WriteTo(w io.Writer) (int64, error) {
-	msg, err := s.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the Packet type.
 func (s *Suback) Type() MessageType {
 	return MessageType(pbx.MessageType_SUBACK)
-}
-
-// String returns the name of operation.
-func (s *Suback) String() string {
-	return "suback"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -122,7 +75,7 @@ func (s *Suback) Info() Info {
 	return Info{Qos: 0, MessageID: s.MessageID}
 }
 
-func (u *Unsubscribe) encode() (bytes.Buffer, error) {
+func encodeUnsubscribe(u Unsubscribe) (bytes.Buffer, error) {
 	var msg bytes.Buffer
 	var subs []*pbx.Subscriber
 	for _, sub := range u.Subscribers {
@@ -143,32 +96,9 @@ func (u *Unsubscribe) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (u *Unsubscribe) Encode() []byte {
-	msg, err := u.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// Write writes the encoded Packet to the underlying writer.
-func (u *Unsubscribe) WriteTo(w io.Writer) (int64, error) {
-	msg, err := u.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the Packet type.
 func (u *Unsubscribe) Type() MessageType {
 	return MessageType(pbx.MessageType_UNSUBSCRIBE)
-}
-
-// String returns the name of operation.
-func (u *Unsubscribe) String() string {
-	return "unsub"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -176,9 +106,9 @@ func (u *Unsubscribe) Info() Info {
 	return Info{Qos: 1, MessageID: u.MessageID}
 }
 
-func (u *Unsuback) encode() (bytes.Buffer, error) {
+func encodeUnsuback(u Unsuback) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	unusuback := pbx.Unsuback(*u)
+	unusuback := pbx.Unsuback(u)
 	pkt, err := proto.Marshal(&unusuback)
 	if err != nil {
 		return msg, err
@@ -189,32 +119,9 @@ func (u *Unsuback) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (u *Unsuback) Encode() []byte {
-	msg, err := u.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded Packet to the underlying writer.
-func (u *Unsuback) WriteTo(w io.Writer) (int64, error) {
-	msg, err := u.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the Packet type.
 func (u *Unsuback) Type() MessageType {
 	return MessageType(pbx.MessageType_UNSUBACK)
-}
-
-// String returns the name of operation.
-func (u *Unsuback) String() string {
-	return "unsuback"
 }
 
 // Info returns Qos and MessageID of this packet.

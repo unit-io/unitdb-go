@@ -2,7 +2,6 @@ package packets
 
 import (
 	"bytes"
-	"io"
 
 	"github.com/golang/protobuf/proto"
 	pbx "github.com/unit-io/unitd/proto"
@@ -16,9 +15,9 @@ type (
 	Disconnect pbx.Disconnect
 )
 
-func (c *Connect) encode() (bytes.Buffer, error) {
+func encodeConnect(c Connect) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	conn := pbx.Conn(*c)
+	conn := pbx.Conn(c)
 	pkt, err := proto.Marshal(&conn)
 	if err != nil {
 		return msg, err
@@ -29,32 +28,9 @@ func (c *Connect) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (c *Connect) Encode() []byte {
-	msg, err := c.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded message to the underlying writer.
-func (c *Connect) WriteTo(w io.Writer) (int64, error) {
-	msg, err := c.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the packet type.
 func (c *Connect) Type() MessageType {
 	return MessageType(pbx.MessageType_CONNECT)
-}
-
-// String returns the name of operation.
-func (c *Connect) String() string {
-	return "connect"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -62,9 +38,9 @@ func (c *Connect) Info() Info {
 	return Info{Qos: 0, MessageID: 0}
 }
 
-func (c *Connack) encode() (bytes.Buffer, error) {
+func encodeConnack(c Connack) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	connack := pbx.Connack(*c)
+	connack := pbx.Connack(c)
 	pkt, err := proto.Marshal(&connack)
 	if err != nil {
 		return msg, err
@@ -75,32 +51,9 @@ func (c *Connack) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (c *Connack) Encode() []byte {
-	msg, err := c.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded message to the buffer.
-func (c *Connack) WriteTo(w io.Writer) (int64, error) {
-	msg, err := c.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the packet type.
 func (c *Connack) Type() MessageType {
 	return MessageType(pbx.MessageType_CONNACK)
-}
-
-// String returns the name of operation.
-func (c *Connack) String() string {
-	return "connack"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -108,9 +61,9 @@ func (c *Connack) Info() Info {
 	return Info{Qos: 0, MessageID: 0}
 }
 
-func (p *Pingreq) encode() (bytes.Buffer, error) {
+func encodePingreq(p Pingreq) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	pingreq := pbx.Pingreq(*p)
+	pingreq := pbx.Pingreq(p)
 	pkt, err := proto.Marshal(&pingreq)
 	if err != nil {
 		return msg, err
@@ -121,32 +74,9 @@ func (p *Pingreq) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (p *Pingreq) Encode() []byte {
-	msg, err := p.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded packet to the underlying writer.
-func (p *Pingreq) WriteTo(w io.Writer) (int64, error) {
-	msg, err := p.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the packet type.
 func (p *Pingreq) Type() MessageType {
 	return MessageType(pbx.MessageType_PINGREQ)
-}
-
-// String returns the name of operation.
-func (p *Pingreq) String() string {
-	return "pingreq"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -154,9 +84,9 @@ func (p *Pingreq) Info() Info {
 	return Info{Qos: 0, MessageID: 0}
 }
 
-func (p *Pingresp) encode() (bytes.Buffer, error) {
+func encodePingresp(p Pingresp) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	pingresp := pbx.Pingresp(*p)
+	pingresp := pbx.Pingresp(p)
 	pkt, err := proto.Marshal(&pingresp)
 	if err != nil {
 		return msg, err
@@ -167,32 +97,9 @@ func (p *Pingresp) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (p *Pingresp) Encode() []byte {
-	msg, err := p.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded packet to the underlying writer.
-func (p *Pingresp) WriteTo(w io.Writer) (int64, error) {
-	msg, err := p.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the packet type.
 func (p *Pingresp) Type() MessageType {
 	return MessageType(pbx.MessageType_PINGRESP)
-}
-
-// String returns the name of operation.
-func (p *Pingresp) String() string {
-	return "pingresp"
 }
 
 // Info returns Qos and MessageID of this packet.
@@ -200,9 +107,9 @@ func (p *Pingresp) Info() Info {
 	return Info{Qos: 0, MessageID: 0}
 }
 
-func (d *Disconnect) encode() (bytes.Buffer, error) {
+func encodeDisconnect(d Disconnect) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	disc := pbx.Disconnect(*d)
+	disc := pbx.Disconnect(d)
 	pkt, err := proto.Marshal(&disc)
 	if err != nil {
 		return msg, err
@@ -213,32 +120,9 @@ func (d *Disconnect) encode() (bytes.Buffer, error) {
 	return msg, err
 }
 
-// Encode encodes message into binary data
-func (d *Disconnect) Encode() []byte {
-	msg, err := d.encode()
-	if err != nil {
-		return nil
-	}
-	return msg.Bytes()
-}
-
-// WriteTo writes the encoded packet to the underlying writer.
-func (d *Disconnect) WriteTo(w io.Writer) (int64, error) {
-	msg, err := d.encode()
-	if err != nil {
-		return 0, err
-	}
-	return msg.WriteTo(w)
-}
-
 // Type returns the packet type.
 func (d *Disconnect) Type() MessageType {
 	return MessageType(pbx.MessageType_DISCONNECT)
-}
-
-// String returns the name of operation.
-func (d *Disconnect) String() string {
-	return "disconnect"
 }
 
 // Info returns Qos and MessageID of this packet.

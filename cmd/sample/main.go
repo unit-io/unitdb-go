@@ -120,7 +120,7 @@ func main() {
 			*id,
 			// unitd.WithInsecure(),
 			unitd.WithUserNamePassword(*user, *password),
-			unitd.WithCleanSession(),
+			// unitd.WithCleanSession(),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -149,7 +149,7 @@ func main() {
 			*id,
 			// unitd.WithInsecure(),
 			unitd.WithUserNamePassword(*user, *password),
-			unitd.WithCleanSession(),
+			// unitd.WithCleanSession(),
 			unitd.WithConnectionLostHandler(func(client unitd.Client, err error) {
 				if err != nil {
 					log.Fatal(err)

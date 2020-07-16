@@ -102,16 +102,17 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 	c.callbacks[0] = c.opts.defaultMessageHandler
 
 	// Open database connection
-	if err := store.Open(c.opts.storePath); err != nil {
-		return nil, err
-	}
-
-	// Init message store and recover pending messages from log file if reset is set false
 	path := c.opts.storePath
 	if clientID != "" {
 		path = path + "/" + clientID
 	}
-	if err := store.InitMessageStore(c.context, path, int64(c.opts.storeSize), c.opts.storeLogReleaseDuration, false); err != nil {
+	if err := store.Open(path, int64(c.opts.storeSize), c.opts.storeLogReleaseDuration); err != nil {
+		return nil, err
+	}
+
+	// Init message store and recover pending messages from log file if reset is set false
+
+	if err := store.InitMessageStore(c.context, false); err != nil {
 		return nil, err
 	}
 
@@ -234,7 +235,7 @@ func (c *client) attemptConnection(ctx context.Context) error {
 
 // Disconnect will disconnect the connection to the server
 func (c *client) Disconnect() error {
-	return c.DisconnectContext(context.Background())
+	return c.DisconnectContext(c.context)
 }
 
 // Disconnect will disconnect the connection to the server

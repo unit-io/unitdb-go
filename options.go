@@ -93,7 +93,7 @@ func WithDefaultOptions() Options {
 		o.insecureFlag = false
 		o.username = ""
 		o.password = ""
-		o.cleanSession = true
+		o.cleanSession = false
 		o.keepAlive = 60
 		o.pingTimeout = 60 * time.Second
 		o.connectTimeout = 60 * time.Second

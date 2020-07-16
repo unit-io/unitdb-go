@@ -9,6 +9,23 @@ import (
 	pbx "github.com/unit-io/unitd/proto"
 )
 
+const (
+	CONNECT = uint8(iota + 1)
+	CONNACK
+	PUBLISH
+	PUBACK
+	PUBREC
+	PUBREL
+	PUBCOMP
+	SUBSCRIBE
+	SUBACK
+	UNSUBSCRIBE
+	UNSUBACK
+	PINGREQ
+	PINGRESP
+	DISCONNECT
+)
+
 //Below are the const definitions for error codes returned by
 //Connect()
 const (
@@ -24,11 +41,7 @@ const (
 
 //Packet is the interface all our packets in the line protocol will be implementing
 type Packet interface {
-	fmt.Stringer
-
 	Type() MessageType
-	Encode() []byte
-	WriteTo(io.Writer) (int64, error)
 	Info() Info
 }
 
@@ -47,12 +60,12 @@ func ReadPacket(r io.Reader) (Packet, error) {
 	fh.unpack(r)
 
 	// Check for empty packets
-	switch fh.MessageType {
-	case pbx.MessageType_PINGREQ:
+	switch uint8(fh.MessageType) {
+	case PINGREQ:
 		return &Pingreq{}, nil
-	case pbx.MessageType_PINGRESP:
+	case PINGRESP:
 		return &Pingresp{}, nil
-	case pbx.MessageType_DISCONNECT:
+	case DISCONNECT:
 		return &Disconnect{}, nil
 	}
 
@@ -64,34 +77,69 @@ func ReadPacket(r io.Reader) (Packet, error) {
 
 	// unpack the body
 	var pkt Packet
-	switch fh.MessageType {
-	case pbx.MessageType_CONNECT:
+	switch uint8(fh.MessageType) {
+	case CONNECT:
 		pkt = unpackConnect(msg)
-	case pbx.MessageType_CONNACK:
+	case CONNACK:
 		pkt = unpackConnack(msg)
-	case pbx.MessageType_PUBLISH:
+	case PUBLISH:
 		pkt = unpackPublish(msg)
-	case pbx.MessageType_PUBACK:
+	case PUBACK:
 		pkt = unpackPuback(msg)
-	case pbx.MessageType_PUBREC:
+	case PUBREC:
 		pkt = unpackPubrec(msg)
-	case pbx.MessageType_PUBREL:
+	case PUBREL:
 		pkt = unpackPubrel(msg)
-	case pbx.MessageType_PUBCOMP:
+	case PUBCOMP:
 		pkt = unpackPubcomp(msg)
-	case pbx.MessageType_SUBSCRIBE:
+	case SUBSCRIBE:
 		pkt = unpackSubscribe(msg)
-	case pbx.MessageType_SUBACK:
+	case SUBACK:
 		pkt = unpackSuback(msg)
-	case pbx.MessageType_UNSUBSCRIBE:
+	case UNSUBSCRIBE:
 		pkt = unpackUnsubscribe(msg)
-	case pbx.MessageType_UNSUBACK:
+	case UNSUBACK:
 		pkt = unpackUnsuback(msg)
 	default:
 		return nil, fmt.Errorf("Invalid zero-length packet with type %d", fh.MessageType)
 	}
 
 	return pkt, nil
+}
+
+// Encode encodes the message into binary data
+func Encode(pkt Packet) (bytes.Buffer, error) {
+	switch uint8(pkt.Type()) {
+	case PINGREQ:
+		return encodePingreq(*pkt.(*Pingreq))
+	case PINGRESP:
+		return encodePingresp(*pkt.(*Pingresp))
+	case CONNECT:
+		return encodeConnect(*pkt.(*Connect))
+	case CONNACK:
+		return encodeConnack(*pkt.(*Connack))
+	case DISCONNECT:
+		return encodeDisconnect(*pkt.(*Disconnect))
+	case SUBSCRIBE:
+		return encodeSubscribe(*pkt.(*Subscribe))
+	case SUBACK:
+		return encodeSuback(*pkt.(*Suback))
+	case UNSUBSCRIBE:
+		return encodeUnsubscribe(*pkt.(*Unsubscribe))
+	case UNSUBACK:
+		return encodeUnsuback(*pkt.(*Unsuback))
+	case PUBLISH:
+		return encodePublish(*pkt.(*Publish))
+	case PUBACK:
+		return encodePuback(*pkt.(*Puback))
+	case PUBREC:
+		return encodePubrec(*pkt.(*Pubrec))
+	case PUBREL:
+		return encodePubrel(*pkt.(*Pubrel))
+	case PUBCOMP:
+		return encodePubcomp(*pkt.(*Pubcomp))
+	}
+	return bytes.Buffer{}, nil
 }
 
 func (fh *FixedHeader) pack() bytes.Buffer {
