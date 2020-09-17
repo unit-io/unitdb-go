@@ -162,7 +162,6 @@ func unpackUnsubscribe(data []byte) Packet {
 	for _, sub := range pkt.Subscribers {
 		s := &Subscriber{
 			Topic: sub.Topic,
-			Qos:   sub.Qos,
 		}
 		subs = append(subs, s)
 	}

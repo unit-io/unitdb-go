@@ -234,7 +234,7 @@ func ack(c *client, packet *packets.Publish) func() {
 	return func() {
 		switch packet.Qos {
 		case 2:
-			p := packets.Packet(&packets.Pubrec{MessageID: packet.MessageID})
+			p := packets.Packet(&packets.Pubrec{MessageID: packet.MessageID, Qos: packet.Qos})
 			c.send <- &PacketAndResult{p: p}
 		case 1:
 			p := packets.Packet(&packets.Puback{MessageID: packet.MessageID})

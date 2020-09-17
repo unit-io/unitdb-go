@@ -295,6 +295,8 @@ func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
 	if publishWaitTimeout == 0 {
 		publishWaitTimeout = c.opts.writeTimeout
 	}
+	// persist outbound
+	c.storeOutbound(pub)
 	select {
 	case c.send <- &PacketAndResult{p: pub, r: r}:
 	case <-time.After(publishWaitTimeout):
@@ -331,6 +333,8 @@ func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	if subscribeWaitTimeout == 0 {
 		subscribeWaitTimeout = time.Second * 30
 	}
+	// persist outbound
+	c.storeOutbound(sub)
 	select {
 	case c.send <- &PacketAndResult{p: sub, r: r}:
 	case <-time.After(subscribeWaitTimeout):
@@ -362,6 +366,8 @@ func (c *client) Unsubscribe(topics ...[]byte) Result {
 	if unsubscribeWaitTimeout == 0 {
 		unsubscribeWaitTimeout = time.Second * 30
 	}
+	// persist outbound
+	c.storeOutbound(unsub)
 	select {
 	case c.send <- &PacketAndResult{p: unsub, r: r}:
 	case <-time.After(unsubscribeWaitTimeout):
@@ -453,13 +459,17 @@ func (c *client) updateLastTouched() {
 }
 
 func (c *client) storeInbound(m packets.Packet) {
-	k := uint64(c.inboundID(m.Info().MessageID))<<32 + uint64(c.contract)
-	store.Log.PersistInbound(k, m)
+	blockId := uint64(c.contract)
+	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
+	fmt.Println("inbound: type, key, qos", m.Type(), k, m.Info().Qos)
+	store.Log.PersistInbound(blockId, k, m)
 }
 
 func (c *client) storeOutbound(m packets.Packet) {
-	k := uint64(m.Info().MessageID)<<32 + uint64(c.contract)
-	store.Log.PersistOutbound(k, m)
+	blockId := uint64(c.contract)
+	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
+	fmt.Println("outbound: type, key, qos", m.Type(), k, m.Info().Qos)
+	store.Log.PersistOutbound(blockId, k, m)
 }
 
 // Set closed flag; return true if not already closed.

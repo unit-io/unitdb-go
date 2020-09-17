@@ -106,8 +106,7 @@ func InitMessageStore(ctx context.Context, reset bool) error {
 }
 
 // handle which outgoing messages are stored
-func (l *MessageLog) PersistOutbound(key uint64, msg packets.Packet) {
-	blockId := key & 0xFFFFFFFF
+func (l *MessageLog) PersistOutbound(blockId, key uint64, msg packets.Packet) {
 	switch msg.Info().Qos {
 	case 0:
 		switch msg.(type) {
@@ -149,8 +148,7 @@ func (l *MessageLog) PersistOutbound(key uint64, msg packets.Packet) {
 }
 
 // handle which incoming messages are stored
-func (l *MessageLog) PersistInbound(key uint64, msg packets.Packet) {
-	blockId := key & 0xFFFFFFFF
+func (l *MessageLog) PersistInbound(blockId, key uint64, msg packets.Packet) {
 	switch msg.Info().Qos {
 	case 0:
 		switch msg.(type) {

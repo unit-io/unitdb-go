@@ -81,7 +81,7 @@ func (p *Pubrec) Type() MessageType {
 
 // Info returns Qos and MessageID of this packet.
 func (p *Pubrec) Info() Info {
-	return Info{Qos: 0, MessageID: p.MessageID}
+	return Info{Qos: p.Qos, MessageID: p.MessageID}
 }
 
 func encodePubrel(p Pubrel) (bytes.Buffer, error) {

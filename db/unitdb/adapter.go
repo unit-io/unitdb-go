@@ -68,7 +68,7 @@ func (a *adapter) Open(path string, size int64, dur time.Duration) error {
 	}
 
 	// Attempt to open the database
-	a.db, err = memdb.Open(size)
+	a.db, err = memdb.Open(size, &memdb.Options{MaxElapsedTime: 2 * time.Second})
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ func (a *adapter) Recovery(reset bool) (map[uint64][]byte, error) {
 	if err != nil {
 		return m, err
 	}
-	err = r.Read(func(lSeq uint64, last bool) (ok bool, err error) {
+	err = r.Read(func(timeID int64) (ok bool, err error) {
 		l := r.Count()
 		for i := uint32(0); i < l; i++ {
 			logData, ok, err := r.Next()
@@ -273,20 +273,20 @@ func (a *adapter) Write() error {
 		offset += dataLen
 	}
 
-	if err := <-logWriter.SignalInitWrite(timeNow()); err != nil {
+	if err := <-logWriter.SignalInitWrite(nexTimeID(a.config.dur)); err != nil {
 		return err
 	}
 	a.tinyBatch.reset()
 	// signal log applied for older messages those are acknowledged or timed out.
-	return a.wal.SignalLogApplied(timeSeq(a.config.dur))
+	return a.wal.SignalLogApplied(timeID(a.config.dur))
 }
 
-func timeNow() uint64 {
-	return uint64(time.Now().UTC().Round(time.Millisecond).Unix())
+func timeID(dur time.Duration) int64 {
+	return time.Now().UTC().Truncate(dur).Round(time.Millisecond).Unix()
 }
 
-func timeSeq(dur time.Duration) uint64 {
-	return uint64(time.Now().UTC().Truncate(dur).Round(time.Millisecond).Unix())
+func nexTimeID(dur time.Duration) int64 {
+	return time.Now().UTC().Truncate(dur).Add(dur).Round(time.Millisecond).Unix()
 }
 
 func init() {
