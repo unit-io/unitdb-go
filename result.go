@@ -1,11 +1,11 @@
-package unitd
+package unite
 
 import (
 	"context"
 	"sync"
 	"time"
 
-	"github.com/unit-io/unitd-go/packets"
+	"github.com/unit-io/unite-go/packets"
 )
 
 // PacketAndResult is a type that contains both a Packet and a Result.
@@ -76,13 +76,13 @@ func (r *result) Get(ctx context.Context, d time.Duration) (bool, error) {
 // it provides information about calls to Connect()
 type ConnectResult struct {
 	result
-	returnCode     uint32
+	returnCode     int32
 	sessionPresent bool
 }
 
 // ReturnCode returns the acknowledgement code in the connack sent
 // in response to a Connect()
-func (r *ConnectResult) ReturnCode() uint32 {
+func (r *ConnectResult) ReturnCode() int32 {
 	r.m.RLock()
 	defer r.m.RUnlock()
 	return r.returnCode
@@ -100,12 +100,12 @@ func (r *ConnectResult) SessionPresent() bool {
 // required to provide information about calls to Publish()
 type PublishResult struct {
 	result
-	messageID uint32
+	messageID int32
 }
 
 // MessageID returns the message ID that was assigned to the
 // Publish packet when it was sent to the server
-func (r *PublishResult) MessageID() uint32 {
+func (r *PublishResult) MessageID() int32 {
 	return r.messageID
 }
 
@@ -113,7 +113,7 @@ func (r *PublishResult) MessageID() uint32 {
 //for the QOS' pairs in unsubscribe and subscribe
 type TopicQOSTuple struct {
 	Qos   uint8
-	Topic []byte
+	Topic string
 }
 
 // SubscribeResult is an extension of result containing the extra fields
@@ -122,7 +122,7 @@ type SubscribeResult struct {
 	result
 	subs      []TopicQOSTuple
 	subResult map[string]byte
-	messageID uint32
+	messageID int32
 }
 
 // Result returns a map of topics that were subscribed to along with
@@ -138,7 +138,7 @@ func (r *SubscribeResult) Result() map[string]byte {
 // required to provide information about calls to Unsubscribe()
 type UnsubscribeResult struct {
 	result
-	messageID uint32
+	messageID int32
 }
 
 // DisconnectResult is an extension of result containing the extra fields

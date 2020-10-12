@@ -4,18 +4,18 @@ import (
 	"bytes"
 
 	"github.com/golang/protobuf/proto"
-	pbx "github.com/unit-io/unitd/proto"
+	pbx "github.com/unit-io/unite/proto"
 )
 
 type (
 	Subscriber pbx.Subscriber
 	Subscribe  struct {
-		MessageID   uint32
+		MessageID   int32
 		Subscribers []*Subscriber
 	}
 	Suback      pbx.Suback
 	Unsubscribe struct {
-		MessageID   uint32
+		MessageID   int32
 		Subscribers []*Subscriber
 	}
 	Unsuback pbx.Unsuback
@@ -36,7 +36,7 @@ func encodeSubscribe(s Subscribe) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_SUBSCRIBE, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_SUBSCRIBE, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -59,7 +59,7 @@ func encodeSuback(s Suback) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_SUBACK, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_SUBACK, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -90,7 +90,7 @@ func encodeUnsubscribe(u Unsubscribe) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBSCRIBE, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBSCRIBE, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -113,7 +113,7 @@ func encodeUnsuback(u Unsuback) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBACK, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBACK, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err

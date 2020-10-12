@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/golang/protobuf/proto"
-	pbx "github.com/unit-io/unitd/proto"
+	pbx "github.com/unit-io/unite/proto"
 )
 
 const (
@@ -50,8 +50,8 @@ type FixedHeader pbx.FixedHeader
 
 // Info returns Qos and MessageID by the Info() function called on the Packet
 type Info struct {
-	Qos       uint32
-	MessageID uint32
+	Qos       int32
+	MessageID int32
 }
 
 // ReadPacket unpacks the packet from the provided reader.

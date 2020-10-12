@@ -1,4 +1,4 @@
-	package unitd
+	package unite
 
 	import (
 		"sync"

@@ -1,4 +1,4 @@
-package unitd
+package unite
 
 import (
 	"context"
@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/unit-io/unitd-go/packets"
-	"github.com/unit-io/unitd-go/store"
-	plugins "github.com/unit-io/unitd/plugins/grpc"
-	pbx "github.com/unit-io/unitd/proto"
+	"github.com/unit-io/unite-go/packets"
+	"github.com/unit-io/unite-go/store"
+	plugins "github.com/unit-io/unite/plugins/grpc"
+	pbx "github.com/unit-io/unite/proto"
 	"google.golang.org/grpc"
 
 	// Database store
-	_ "github.com/unit-io/unitd-go/db/unitdb"
+	_ "github.com/unit-io/unite-go/db/unitdb"
 )
 
 // Various constant parts of the Client Connection.
@@ -42,14 +42,14 @@ type Client interface {
 	DisconnectContext(ctx context.Context) error
 	// Publish will publish a message with the specified QoS and content
 	// to the specified topic.
-	Publish(topic, payload []byte, pubOpts ...PubOptions) Result
+	Publish(topic, payload string, pubOpts ...PubOptions) Result
 	// Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 	// a message is published on the topic provided, or nil for the default handler
-	Subscribe(topic []byte, subOpts ...SubOptions) Result
+	Subscribe(topic string, subOpts ...SubOptions) Result
 	// Unsubscribe will end the subscription from each of the topics provided.
 	// Messages published to those topics from other clients will no longer be
 	// received.
-	Unsubscribe(topics ...[]byte) Result
+	Unsubscribe(topics ...string) Result
 }
 type client struct {
 	mu         sync.Mutex // mutex for the connection
@@ -58,7 +58,7 @@ type client struct {
 	cancel     context.CancelFunc // cancellation function
 	contract   uint32
 	messageIds          // local identifier of messages
-	connID     uint32   // Theunique id of the connection.
+	connID     int32    // Theunique id of the connection.
 	conn       net.Conn // the network connection
 	stream     grpc.Stream
 	send       chan *PacketAndResult
@@ -212,7 +212,7 @@ func (c *client) attemptConnection(ctx context.Context) error {
 		}
 
 		// Connect to grpc stream
-		stream, err := pbx.NewUnitdClient(conn).Stream(ctx)
+		stream, err := pbx.NewUniteClient(conn).Stream(ctx)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -269,7 +269,7 @@ func (c *client) internalConnLost(err error) {
 
 // Publish will publish a message with the specified QoS and content
 // to the specified topic.
-func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
+func (c *client) Publish(topic, payload string, pubOpts ...PubOptions) Result {
 	r := &PublishResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
@@ -308,7 +308,7 @@ func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
 
 // Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
-func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
+func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
@@ -348,13 +348,12 @@ func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 // Unsubscribe will end the subscription from each of the topics provided.
 // Messages published to those topics from other clients will no longer be
 // received.
-func (c *client) Unsubscribe(topics ...[]byte) Result {
+func (c *client) Unsubscribe(topics ...string) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	unsub := &packets.Unsubscribe{}
 	var subs []*packets.Subscriber
 	for _, topic := range topics {
-		sub := &packets.Subscriber{Topic: make([]byte, len(topic))}
-		copy(sub.Topic, topic)
+		sub := &packets.Subscriber{Topic: topic}
 		subs = append(subs, sub)
 	}
 	unsub.Subscribers = subs
@@ -438,14 +437,14 @@ func TimeNow() time.Time {
 	return time.Now().UTC().Round(time.Millisecond)
 }
 
-func (c *client) inboundID(id uint32) MID {
+func (c *client) inboundID(id int32) MID {
 	// return MID(c.connID - ((id << 4) | uint32(1)))
 	return MID(c.connID - id)
 }
 
-func (c *client) outboundID(mid MID) (id uint32) {
+func (c *client) outboundID(mid MID) (id int32) {
 	// return c.connID - ((uint32(mid) << 4) | uint32(0))
-	return c.connID - (uint32(mid))
+	return c.connID - (int32(mid))
 }
 
 func (c *client) updateLastAction() {

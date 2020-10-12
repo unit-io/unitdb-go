@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/unit-io/bpool"
-	"github.com/unit-io/unitd-go/store"
 	"github.com/unit-io/unitdb/memdb"
 	"github.com/unit-io/unitdb/wal"
+	"github.com/unit-io/unite-go/store"
 )
 
 const (

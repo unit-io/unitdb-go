@@ -1,4 +1,4 @@
-package unitd
+package unite
 
 import (
 	"bufio"
@@ -8,14 +8,14 @@ import (
 	"net"
 	"time"
 
-	"github.com/unit-io/unitd-go/packets"
-	"github.com/unit-io/unitd/pkg/log"
+	"github.com/unit-io/unite-go/packets"
+	"github.com/unit-io/unite/pkg/log"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Packet
-func Connect(conn net.Conn, cm *packets.Connect) (uint32, uint32, bool) {
+func Connect(conn net.Conn, cm *packets.Connect) (int32, int32, bool) {
 	m, err := packets.Encode(cm)
 	if err != nil {
 		fmt.Println(err)
@@ -29,7 +29,7 @@ func Connect(conn net.Conn, cm *packets.Connect) (uint32, uint32, bool) {
 // when the connection is first started.
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
-func verifyCONNACK(conn net.Conn) (uint32, uint32, bool) {
+func verifyCONNACK(conn net.Conn) (int32, int32, bool) {
 	ca, err := packets.ReadPacket(conn)
 	if err != nil {
 		return packets.ErrNetworkError, packets.ErrNetworkError, false
@@ -55,11 +55,10 @@ func (c *client) readLoop(ctx context.Context) error {
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
+	// Set read/write deadlines so we can close dangling connections
+	c.conn.SetDeadline(time.Now().Add(time.Second * 120))
 
 	for {
-		// Set read/write deadlines so we can close dangling connections
-		c.conn.SetDeadline(time.Now().Add(time.Second * 120))
-
 		select {
 		case <-ctx.Done():
 			return nil

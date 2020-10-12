@@ -1,4 +1,4 @@
-package unitd
+package unite
 
 import (
 	"crypto/tls"
@@ -259,7 +259,7 @@ func WithResumeSubs() Options {
 
 // -------------------------------------------------------------
 type pubOptions struct {
-	qos      uint32
+	qos      int32
 	retained bool
 }
 
@@ -284,7 +284,7 @@ func newFuncPubOption(f func(*pubOptions)) *fPubOption {
 	}
 }
 
-func WithPubQos(qos uint32) PubOptions {
+func WithPubQos(qos int32) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
 		o.qos = qos
 	})
@@ -298,7 +298,7 @@ func WithRetained() PubOptions {
 
 // -------------------------------------------------------------
 type subOptions struct {
-	qos      uint32
+	qos      int32
 	callback MessageHandler
 }
 
@@ -323,7 +323,7 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 	}
 }
 
-func WithSubQos(qos uint32) SubOptions {
+func WithSubQos(qos int32) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
 		o.qos = qos
 	})

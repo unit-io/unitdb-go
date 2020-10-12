@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	adapter "github.com/unit-io/unitd-go/db"
-	"github.com/unit-io/unitd-go/packets"
+	adapter "github.com/unit-io/unite-go/db"
+	"github.com/unit-io/unite-go/packets"
 )
 
 var adp adapter.Adapter

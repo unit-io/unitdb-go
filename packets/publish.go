@@ -4,7 +4,7 @@ import (
 	"bytes"
 
 	"github.com/golang/protobuf/proto"
-	pbx "github.com/unit-io/unitd/proto"
+	pbx "github.com/unit-io/unite/proto"
 )
 
 type (
@@ -22,7 +22,7 @@ func encodePublish(p Publish) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PUBLISH, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PUBLISH, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -45,7 +45,7 @@ func encodePuback(p Puback) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PUBACK, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PUBACK, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -68,7 +68,7 @@ func encodePubrec(p Pubrec) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PUBREC, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PUBREC, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -91,7 +91,7 @@ func encodePubrel(p Pubrel) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PUBREL, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PUBREL, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -114,7 +114,7 @@ func encodePubcomp(p Pubcomp) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PUBCOMP, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PUBCOMP, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err

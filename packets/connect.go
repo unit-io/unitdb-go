@@ -4,7 +4,7 @@ import (
 	"bytes"
 
 	"github.com/golang/protobuf/proto"
-	pbx "github.com/unit-io/unitd/proto"
+	pbx "github.com/unit-io/unite/proto"
 )
 
 type (
@@ -22,7 +22,7 @@ func encodeConnect(c Connect) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_CONNECT, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_CONNECT, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -45,7 +45,7 @@ func encodeConnack(c Connack) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_CONNACK, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_CONNACK, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -68,7 +68,7 @@ func encodePingreq(p Pingreq) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PINGREQ, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PINGREQ, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -91,7 +91,7 @@ func encodePingresp(p Pingresp) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PINGRESP, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PINGRESP, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -114,7 +114,7 @@ func encodeDisconnect(d Disconnect) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_DISCONNECT, RemainingLength: uint32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_DISCONNECT, RemainingLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -136,8 +136,8 @@ func unpackConnect(data []byte) Packet {
 
 	connect := &Connect{
 		ProtoName:     pkt.ProtoName,
-		Version:       uint32(pkt.Version),
-		KeepAlive:     uint32(pkt.KeepAlive),
+		Version:       int32(pkt.Version),
+		KeepAlive:     int32(pkt.KeepAlive),
 		ClientID:      pkt.ClientID,
 		InsecureFlag:  pkt.InsecureFlag,
 		UsernameFlag:  pkt.UsernameFlag,
@@ -162,16 +162,4 @@ func unpackConnack(data []byte) Packet {
 	return &Connack{
 		ReturnCode: pkt.ReturnCode,
 	}
-}
-
-func unpackPingreq(data []byte) Packet {
-	return &Pingreq{}
-}
-
-func unpackPingresp(data []byte) Packet {
-	return &Pingresp{}
-}
-
-func unpackDisconnect(data []byte) Packet {
-	return &Disconnect{}
 }

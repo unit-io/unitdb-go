@@ -7,22 +7,22 @@ import (
 	"os"
 	"time"
 
-	unitd "github.com/unit-io/unitd-go"
+	unite "github.com/unit-io/unite-go"
 )
 
-var f unitd.MessageHandler = func(client unitd.Client, msg unitd.Message) {
+var f unite.MessageHandler = func(client unite.Client, msg unite.Message) {
 	fmt.Printf("TOPIC: %s\n", msg.Topic())
 	fmt.Printf("MSG: %s\n", msg.Payload())
 }
 
 func main() {
-	client, err := unitd.NewClient(
+	client, err := unite.NewClient(
 		"grpc://localhost:6061",
 		"UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ",
-		unitd.WithInsecure(),
-		unitd.WithKeepAlive(2*time.Second),
-		unitd.WithPingTimeout(1*time.Second),
-		unitd.WithDefaultMessageHandler(f),
+		unite.WithInsecure(),
+		unite.WithKeepAlive(2*time.Second),
+		unite.WithPingTimeout(1*time.Second),
+		unite.WithDefaultMessageHandler(f),
 	)
 	if err != nil {
 		log.Fatalf("err: %s", err)
@@ -33,7 +33,7 @@ func main() {
 		log.Fatalf("err: %s", err)
 	}
 
-	r := client.Subscribe([]byte("teams.alpha.user1"))
+	r := client.Subscribe("teams.alpha.user1")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -41,7 +41,7 @@ func main() {
 
 	for i := 0; i < 5; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		r := client.Publish([]byte("teams.alpha.user1"), []byte(msg))
+		r := client.Publish("teams.alpha.user1", msg)
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -49,7 +49,7 @@ func main() {
 
 	wait := time.NewTicker(1 * time.Second)
 	<-wait.C
-	r = client.Unsubscribe([]byte("teams.alpha.user1"))
+	r = client.Unsubscribe("teams.alpha.user1")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)

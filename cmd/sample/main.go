@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	unitd "github.com/unit-io/unitd-go"
+	unite "github.com/unit-io/unite-go"
 )
 
 /*
@@ -59,22 +59,22 @@ func main() {
 	fmt.Printf("\tnum:       %d\n", *num)
 
 	if *action == "keygen" {
-		recv := make(chan [2][]byte)
+		recv := make(chan [2]string)
 
-		client, err := unitd.NewClient(
+		client, err := unite.NewClient(
 			*server,
 			*id,
-			// unitd.WithInsecure(),
-			unitd.WithUserNamePassword(*user, *password),
-			unitd.WithCleanSession(),
-			unitd.WithConnectionLostHandler(func(client unitd.Client, err error) {
+			// unite.WithInsecure(),
+			unite.WithUserNamePassword(*user, *password),
+			unite.WithCleanSession(),
+			unite.WithConnectionLostHandler(func(client unite.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitd.WithDefaultMessageHandler(func(client unitd.Client, msg unitd.Message) {
-				recv <- [2][]byte{msg.Topic(), msg.Payload()}
+			unite.WithDefaultMessageHandler(func(client unite.Client, msg unite.Message) {
+				recv <- [2]string{msg.Topic(), msg.Payload()}
 			}),
 		)
 		if err != nil {
@@ -97,7 +97,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Publish([]byte("unitd/keygen"), keyReq)
+		r := client.Publish("unite/keygen", string(keyReq))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -115,12 +115,12 @@ func main() {
 	}
 
 	if *action == "pub" {
-		client, err := unitd.NewClient(
+		client, err := unite.NewClient(
 			*server,
 			*id,
-			// unitd.WithInsecure(),
-			unitd.WithUserNamePassword(*user, *password),
-			// unitd.WithCleanSession(),
+			// unite.WithInsecure(),
+			unite.WithUserNamePassword(*user, *password),
+			// unite.WithCleanSession(),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -132,7 +132,7 @@ func main() {
 		}
 		fmt.Println("Publisher Started")
 		for i := 0; i < *num; i++ {
-			r := client.Publish([]byte(*topic), []byte(*payload), unitd.WithPubQos(2))
+			r := client.Publish(*topic, *payload, unite.WithPubQos(2))
 			if _, err := r.Get(ctx, 1*time.Second); err != nil {
 				log.Fatalf("err: %s", err)
 			}
@@ -142,22 +142,22 @@ func main() {
 		client.DisconnectContext(ctx)
 		fmt.Println("Publisher Disconnected")
 	} else {
-		recv := make(chan [2][]byte)
+		recv := make(chan [2]string)
 
-		client, err := unitd.NewClient(
+		client, err := unite.NewClient(
 			*server,
 			*id,
-			// unitd.WithInsecure(),
-			unitd.WithUserNamePassword(*user, *password),
-			// unitd.WithCleanSession(),
-			unitd.WithConnectionLostHandler(func(client unitd.Client, err error) {
+			// unite.WithInsecure(),
+			unite.WithUserNamePassword(*user, *password),
+			// unite.WithCleanSession(),
+			unite.WithConnectionLostHandler(func(client unite.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitd.WithDefaultMessageHandler(func(client unitd.Client, msg unitd.Message) {
-				recv <- [2][]byte{msg.Topic(), msg.Payload()}
+			unite.WithDefaultMessageHandler(func(client unite.Client, msg unite.Message) {
+				recv <- [2]string{msg.Topic(), msg.Payload()}
 			}),
 		)
 		if err != nil {
@@ -168,7 +168,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe([]byte(*topic), unitd.WithSubQos(2))
+		r := client.Subscribe(*topic, unite.WithSubQos(2))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
