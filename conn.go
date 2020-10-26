@@ -106,13 +106,7 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 	if clientID != "" {
 		path = path + "/" + clientID
 	}
-	if err := store.Open(path, int64(c.opts.storeSize), c.opts.storeLogReleaseDuration); err != nil {
-		return nil, err
-	}
-
-	// Init message store and recover pending messages from log file if reset is set false
-
-	if err := store.InitMessageStore(c.context, false); err != nil {
+	if err := store.Open(path, int64(c.opts.storeSize), false); err != nil {
 		return nil, err
 	}
 
@@ -185,7 +179,7 @@ func (c *client) ConnectContext(ctx context.Context) error {
 		c.resume(c.opts.resumeSubs)
 	} else {
 		// contract is used as blockId and key prefix
-		store.Log.Reset(c.contract)
+		store.Log.Reset()
 	}
 	if c.opts.keepAlive != 0 {
 		c.updateLastAction()
@@ -379,7 +373,7 @@ func (c *client) Unsubscribe(topics ...string) Result {
 // Load all stored messages and resend them to ensure QOS > 1,2 even after an application crash.
 func (c *client) resume(subscription bool) {
 	// contract is used as blockId and key prefix
-	keys := store.Log.Keys(c.contract)
+	keys := store.Log.Keys()
 	for _, k := range keys {
 		msg := store.Log.Get(k)
 		if msg == nil {
@@ -461,14 +455,14 @@ func (c *client) storeInbound(m packets.Packet) {
 	blockId := uint64(c.contract)
 	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
 	fmt.Println("inbound: type, key, qos", m.Type(), k, m.Info().Qos)
-	store.Log.PersistInbound(blockId, k, m)
+	store.Log.PersistInbound(k, m)
 }
 
 func (c *client) storeOutbound(m packets.Packet) {
 	blockId := uint64(c.contract)
 	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
 	fmt.Println("outbound: type, key, qos", m.Type(), k, m.Info().Qos)
-	store.Log.PersistOutbound(blockId, k, m)
+	store.Log.PersistOutbound(k, m)
 }
 
 // Set closed flag; return true if not already closed.

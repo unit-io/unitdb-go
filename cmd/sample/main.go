@@ -28,7 +28,7 @@ Options:
 */
 
 func main() {
-	topic := flag.String("topic", "AbYANcAPRKPNa/teams.alpha.ch1", "The topic name to/from which to publish/subscribe")
+	topic := flag.String("topic", "AbYANcEGXRTLC/teams.alpha.user1", "The topic name to/from which to publish/subscribe")
 	server := flag.String("server", "grpc://localhost:6061", "The server URI. ex: grpc://127.0.0.1:6061")
 	password := flag.String("password", "", "The password (optional)")
 	user := flag.String("user", "", "The User (optional)")
