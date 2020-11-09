@@ -30,7 +30,7 @@ func (a *adapter) Open(path string, size int64, reset bool) error {
 	// Attempt to open the database
 	var opts memdb.Options
 	if reset {
-		opts = memdb.WithResetFlag()
+		opts = memdb.WithLogReset()
 	}
 
 	a.db, err = memdb.Open(opts, memdb.WithLogFilePath(path), memdb.WithLogSize(size), memdb.WithBufferSize(size))
@@ -66,7 +66,7 @@ func (a *adapter) GetName() string {
 
 // PutMessage appends the messages to the store.
 func (a *adapter) PutMessage(key uint64, payload []byte) error {
-	if err := a.db.Set(key, payload); err != nil {
+	if _, err := a.db.Put(key, payload); err != nil {
 		return err
 	}
 	return nil
