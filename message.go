@@ -1,10 +1,10 @@
-package unite
+package unitdb
 
 import (
 	"net/url"
 	"sync"
 
-	"github.com/unit-io/unite-go/packets"
+	"github.com/unit-io/unitdb-go/packets"
 )
 
 // Message defines the externals that a message implementation must support

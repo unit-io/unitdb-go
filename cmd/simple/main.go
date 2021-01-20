@@ -7,22 +7,22 @@ import (
 	"os"
 	"time"
 
-	unite "github.com/unit-io/unite-go"
+	unitdb "github.com/unit-io/unitdb-go"
 )
 
-var f unite.MessageHandler = func(client unite.Client, msg unite.Message) {
+var f unitdb.MessageHandler = func(client unitdb.Client, msg unitdb.Message) {
 	fmt.Printf("TOPIC: %s\n", msg.Topic())
 	fmt.Printf("MSG: %s\n", msg.Payload())
 }
 
 func main() {
-	client, err := unite.NewClient(
+	client, err := unitdb.NewClient(
 		"grpc://localhost:6061",
 		"UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ",
-		unite.WithInsecure(),
-		unite.WithKeepAlive(2*time.Second),
-		unite.WithPingTimeout(1*time.Second),
-		unite.WithDefaultMessageHandler(f),
+		unitdb.WithInsecure(),
+		unitdb.WithKeepAlive(2*time.Second),
+		unitdb.WithPingTimeout(1*time.Second),
+		unitdb.WithDefaultMessageHandler(f),
 	)
 	if err != nil {
 		log.Fatalf("err: %s", err)

@@ -1,15 +1,15 @@
-package unite
+package unitdb
 
 import (
 	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"time"
 
-	"github.com/unit-io/unite-go/packets"
-	"github.com/unit-io/unite/pkg/log"
+	"github.com/unit-io/unitdb-go/packets"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
@@ -50,7 +50,7 @@ func verifyCONNACK(conn net.Conn) (int32, int32, bool) {
 func (c *client) readLoop(ctx context.Context) error {
 	// c.closeW.Add(1)
 	defer func() {
-		defer log.Info("conn.Handler", "closing...")
+		defer log.Println("conn.Handler: closing...")
 		// c.closeW.Done()
 	}()
 

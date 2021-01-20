@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	adapter "github.com/unit-io/unite-go/db"
-	"github.com/unit-io/unite-go/packets"
+	adapter "github.com/unit-io/unitdb-go/db"
+	"github.com/unit-io/unitdb-go/packets"
 )
 
 var adp adapter.Adapter

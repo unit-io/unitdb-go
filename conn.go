@@ -1,4 +1,4 @@
-package unite
+package unitdb
 
 import (
 	"context"
@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/unit-io/unite-go/packets"
-	"github.com/unit-io/unite-go/store"
-	plugins "github.com/unit-io/unite/plugins/grpc"
-	pbx "github.com/unit-io/unite/proto"
+	"github.com/unit-io/unitdb-go/packets"
+	"github.com/unit-io/unitdb-go/store"
+	plugins "github.com/unit-io/unitdb/server/common"
+	pbx "github.com/unit-io/unitdb/server/proto"
 	"google.golang.org/grpc"
 
 	// Database store
-	_ "github.com/unit-io/unite-go/db/unitdb"
+	_ "github.com/unit-io/unitdb-go/db/unitdb"
 )
 
 // Various constant parts of the Client Connection.
@@ -206,7 +206,7 @@ func (c *client) attemptConnection(ctx context.Context) error {
 		}
 
 		// Connect to grpc stream
-		stream, err := pbx.NewUniteClient(conn).Stream(ctx)
+		stream, err := pbx.NewUnitdbClient(conn).Stream(ctx)
 		if err != nil {
 			log.Fatal(err)
 		}

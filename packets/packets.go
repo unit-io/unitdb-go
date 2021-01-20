@@ -6,7 +6,7 @@ import (
 	"io"
 
 	"github.com/golang/protobuf/proto"
-	pbx "github.com/unit-io/unite/proto"
+	pbx "github.com/unit-io/unitdb/server/proto"
 )
 
 const (

@@ -1,11 +1,11 @@
-package unite
+package unitdb
 
 import (
 	"context"
 	"sync"
 	"time"
 
-	"github.com/unit-io/unite-go/packets"
+	"github.com/unit-io/unitdb-go/packets"
 )
 
 // PacketAndResult is a type that contains both a Packet and a Result.

@@ -1,4 +1,4 @@
-package unite
+package unitdb
 
 import (
 	"crypto/tls"

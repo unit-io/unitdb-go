@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	unite "github.com/unit-io/unite-go"
+	unitdb "github.com/unit-io/unitdb-go"
 )
 
 /*
@@ -61,19 +61,19 @@ func main() {
 	if *action == "keygen" {
 		recv := make(chan [2]string)
 
-		client, err := unite.NewClient(
+		client, err := unitdb.NewClient(
 			*server,
 			*id,
-			// unite.WithInsecure(),
-			unite.WithUserNamePassword(*user, *password),
-			unite.WithCleanSession(),
-			unite.WithConnectionLostHandler(func(client unite.Client, err error) {
+			// unitdb.WithInsecure(),
+			unitdb.WithUserNamePassword(*user, *password),
+			unitdb.WithCleanSession(),
+			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unite.WithDefaultMessageHandler(func(client unite.Client, msg unite.Message) {
+			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
 				recv <- [2]string{msg.Topic(), msg.Payload()}
 			}),
 		)
@@ -97,7 +97,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Publish("unite/keygen", string(keyReq))
+		r := client.Publish("unitdb/keygen", string(keyReq))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -115,12 +115,12 @@ func main() {
 	}
 
 	if *action == "pub" {
-		client, err := unite.NewClient(
+		client, err := unitdb.NewClient(
 			*server,
 			*id,
-			// unite.WithInsecure(),
-			unite.WithUserNamePassword(*user, *password),
-			// unite.WithCleanSession(),
+			// unitdb.WithInsecure(),
+			unitdb.WithUserNamePassword(*user, *password),
+			// unitdb.WithCleanSession(),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -132,7 +132,7 @@ func main() {
 		}
 		fmt.Println("Publisher Started")
 		for i := 0; i < *num; i++ {
-			r := client.Publish(*topic, *payload, unite.WithPubQos(2))
+			r := client.Publish(*topic, *payload, unitdb.WithPubQos(2))
 			if _, err := r.Get(ctx, 1*time.Second); err != nil {
 				log.Fatalf("err: %s", err)
 			}
@@ -144,19 +144,19 @@ func main() {
 	} else {
 		recv := make(chan [2]string)
 
-		client, err := unite.NewClient(
+		client, err := unitdb.NewClient(
 			*server,
 			*id,
-			// unite.WithInsecure(),
-			unite.WithUserNamePassword(*user, *password),
-			// unite.WithCleanSession(),
-			unite.WithConnectionLostHandler(func(client unite.Client, err error) {
+			// unitdb.WithInsecure(),
+			unitdb.WithUserNamePassword(*user, *password),
+			// unitdb.WithCleanSession(),
+			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unite.WithDefaultMessageHandler(func(client unite.Client, msg unite.Message) {
+			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
 				recv <- [2]string{msg.Topic(), msg.Payload()}
 			}),
 		)
@@ -168,7 +168,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe(*topic, unite.WithSubQos(2))
+		r := client.Subscribe(*topic, unitdb.WithSubQos(2))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)

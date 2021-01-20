@@ -3,8 +3,8 @@ package adapter
 import (
 	"errors"
 
+	"github.com/unit-io/unitdb-go/store"
 	"github.com/unit-io/unitdb/memdb"
-	"github.com/unit-io/unite-go/store"
 )
 
 const (
@@ -33,7 +33,7 @@ func (a *adapter) Open(path string, size int64, reset bool) error {
 		opts = memdb.WithLogReset()
 	}
 
-	a.db, err = memdb.Open(opts, memdb.WithLogFilePath(path), memdb.WithLogSize(size), memdb.WithBufferSize(size))
+	a.db, err = memdb.Open(opts, memdb.WithLogFilePath(path), memdb.WithBufferSize(size))
 	if err != nil {
 		return err
 	}
