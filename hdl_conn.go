@@ -75,7 +75,7 @@ func (c *client) readLoop(ctx context.Context) error {
 			c.storeInbound(msg)
 
 			// Message handler
-			if err := c.handler(msg); err != nil {
+			if err := c.handle(msg); err != nil {
 				return err
 			}
 		}
@@ -83,7 +83,7 @@ func (c *client) readLoop(ctx context.Context) error {
 }
 
 // handle handles inbound messages.
-func (c *client) handler(msg packets.Packet) error {
+func (c *client) handle(msg packets.Packet) error {
 	c.updateLastAction()
 
 	switch m := msg.(type) {

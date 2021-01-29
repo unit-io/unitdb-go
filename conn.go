@@ -13,7 +13,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/unit-io/unitdb-go/packets"
 	"github.com/unit-io/unitdb-go/store"
-	plugins "github.com/unit-io/unitdb/server/common"
+	"github.com/unit-io/unitdb/server/common"
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"google.golang.org/grpc"
 
@@ -115,16 +115,16 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 
 func StreamConn(
 	stream grpc.Stream,
-) *plugins.Conn {
+) *common.Conn {
 	packetFunc := func(msg proto.Message) *[]byte {
 		return &msg.(*pbx.Packet).Data
 	}
-	return &plugins.Conn{
+	return &common.Conn{
 		Stream: stream,
 		InMsg:  &pbx.Packet{},
 		OutMsg: &pbx.Packet{},
-		Encode: plugins.Encode(packetFunc),
-		Decode: plugins.Decode(packetFunc),
+		Encode: common.Encode(packetFunc),
+		Decode: common.Decode(packetFunc),
 	}
 }
 
