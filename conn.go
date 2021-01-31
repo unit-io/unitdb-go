@@ -194,26 +194,41 @@ func (c *client) ConnectContext(ctx context.Context) error {
 }
 
 func (c *client) attemptConnection(ctx context.Context) error {
-	for _, url := range c.opts.servers {
-		conn, err := grpc.Dial(
-			url.Host,
-			grpc.WithBlock(),
-			grpc.WithInsecure(),
-			grpc.WithTimeout(c.opts.connectTimeout),
-		)
-		if err != nil {
-			return err
-		}
+	for _, uri := range c.opts.servers {
+		switch uri.Scheme {
+		case "grpc", "ws":
+			conn, err := grpc.Dial(
+				uri.Host,
+				grpc.WithBlock(),
+				grpc.WithInsecure(),
+				grpc.WithTimeout(c.opts.connectTimeout),
+			)
+			if err != nil {
+				return err
+			}
 
-		// Connect to grpc stream
-		stream, err := pbx.NewUnitdbClient(conn).Stream(ctx)
-		if err != nil {
-			log.Fatal(err)
+			// Connect to grpc stream
+			stream, err := pbx.NewUnitdbClient(conn).Stream(ctx)
+			if err != nil {
+				log.Fatal(err)
+			}
+			c.conn = StreamConn(stream)
+		case "tcp":
+			conn, err := net.DialTimeout("tcp", uri.Host, c.opts.connectTimeout)
+			if err != nil {
+				return err
+			}
+			c.conn = conn
+		case "unix":
+			conn, err := net.DialTimeout("unix", uri.Host, c.opts.connectTimeout)
+			if err != nil {
+				return err
+			}
+			c.conn = conn
 		}
-		c.conn = StreamConn(stream)
 
 		// get Connect message from options.
-		cm := newConnectMsgFromOptions(c.opts, url)
+		cm := newConnectMsgFromOptions(c.opts, uri)
 		rc, connId, _ := Connect(c.conn, cm)
 		if rc == packets.Accepted {
 			c.connID = connId
