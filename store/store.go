@@ -90,7 +90,6 @@ func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
 			// from inbound
 			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
 			adp.DeleteMessage(ikey)
-			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Publish:
 			// Sending publish. store in obound
 			// until pubcomp received
@@ -101,7 +100,6 @@ func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
 				return
 			}
 			adp.PutMessage(okey, m.Bytes())
-			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		}
 	case 1, 2:
 		switch msg.(type) {
@@ -110,7 +108,6 @@ func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
 			// from inbound
 			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
 			adp.DeleteMessage(ikey)
-			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Publish, *utp.Pubreceive, *utp.Subscribe, *utp.Unsubscribe:
 			// Sending publish. store in obound
 			// until pubcomp received
@@ -121,7 +118,6 @@ func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
 				return
 			}
 			adp.PutMessage(okey, m.Bytes())
-			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		default:
 			fmt.Println("Store::PersistOutbound: Invalid message type")
 		}
@@ -138,7 +134,6 @@ func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
 			// or pubrecv for RELIABLE delivery mode from obound
 			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
 			adp.DeleteMessage(okey)
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Publish:
 			// Received a publish. store it in ibound
 			// until pubcomp received
@@ -149,11 +144,9 @@ func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
 				return
 			}
 			adp.PutMessage(ikey, m.Bytes())
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Pingresp, *utp.Connack:
 		default:
 			fmt.Println("Store::PersistInbound: Invalid message type")
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		}
 	case 1, 2:
 		switch msg.(type) {
@@ -162,7 +155,6 @@ func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
 			// from obound
 			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
 			adp.DeleteMessage(okey)
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Pubnew:
 			// Received a publish. store it in ibound
 			// until pubrec received
@@ -173,11 +165,9 @@ func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
 				return
 			}
 			adp.PutMessage(ikey, m.Bytes())
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		case *utp.Publish:
 		default:
 			fmt.Println("Store::PersistInbound: Invalid message type")
-			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		}
 	}
 }

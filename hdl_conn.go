@@ -89,7 +89,6 @@ func (c *client) handler(msg utp.Packet) error {
 	switch m := msg.(type) {
 	case *utp.Pingresp:
 		c.updateLastTouched()
-		fmt.Println("conn::handler: pingresp ", c.lastTouched.Load().(time.Time))
 	case *utp.Suback:
 		mId := c.inboundID(m.MessageID)
 		c.getType(mId).flowComplete()
@@ -112,7 +111,6 @@ func (c *client) handler(msg utp.Packet) error {
 		c.send <- &PacketAndResult{p: p}
 	case *utp.Pubcomplete:
 		mId := c.inboundID(m.MessageID)
-		fmt.Println("conn::handler: pubcomp MessageID, InboundID ", m.MessageID, mId)
 		r := c.getType(mId)
 		if r != nil {
 			r.flowComplete()
@@ -213,7 +211,6 @@ func (c *client) keepalive(ctx context.Context) {
 				pingSent = TimeNow()
 			}
 			if lastTouched.Before(timeout) && pingSent.Before(timeout) {
-				fmt.Println("pingresp not received, disconnecting")
 				go c.internalConnLost(errors.New("pingresp not received, disconnecting")) // no harm in calling this if the connection is already down (better than stopping!)
 				return
 			}
@@ -224,7 +221,6 @@ func (c *client) keepalive(ctx context.Context) {
 // ack acknowledges a packet
 func ack(c *client, pkt *utp.Publish) func() {
 	return func() {
-		fmt.Println("conn::ack: pub, deliveryMode ", pkt.Info().DeliveryMode)
 		switch pkt.Info().DeliveryMode {
 		// DeliveryMode RELIABLE or BATCH
 		case 1, 2:

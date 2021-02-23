@@ -1,7 +1,6 @@
 package unitdb
 
 import (
-	"fmt"
 	"sync"
 )
 
@@ -23,7 +22,6 @@ func (mids *messageIds) reset(id MID) {
 func (mids *messageIds) freeID(id MID) {
 	mids.Lock()
 	defer mids.Unlock()
-	fmt.Println("MessageIDs::freeID: MessageID ", id)
 	delete(mids.index, id)
 }
 
@@ -38,6 +36,5 @@ func (mids *messageIds) nextID(r Result) MID {
 func (mids *messageIds) getType(id MID) Result {
 	mids.RLock()
 	defer mids.RUnlock()
-	fmt.Println("MessageIDs::getType: index ", mids.index)
 	return mids.index[id]
 }
