@@ -4,43 +4,43 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/unit-io/unitdb-go/packets"
+	"github.com/unit-io/unitdb-go/utp"
 )
 
 // Message defines the externals that a message implementation must support
 // these are received messages that are passed, not internal
 // messages
 type Message interface {
-	Topic() string
+	Topic() []byte
 	MessageID() int32
-	Payload() string
+	Payload() []byte
 	Ack()
 }
 
 type message struct {
-	duplicate bool
-	qos       byte
-	retained  bool
-	topic     string
-	messageID int32
-	payload   string
-	once      sync.Once
-	ack       func()
+	duplicate    bool
+	deliveryMode byte
+	retained     bool
+	topic        []byte
+	messageID    int32
+	payload      []byte
+	once         sync.Once
+	ack          func()
 }
 
 func (m *message) Duplicate() bool {
 	return m.duplicate
 }
 
-func (m *message) Qos() byte {
-	return m.qos
+func (m *message) DeliveryMode() byte {
+	return m.deliveryMode
 }
 
 func (m *message) Retained() bool {
 	return m.retained
 }
 
-func (m *message) Topic() string {
+func (m *message) Topic() []byte {
 	return m.topic
 }
 
@@ -48,7 +48,7 @@ func (m *message) MessageID() int32 {
 	return m.messageID
 }
 
-func (m *message) Payload() string {
+func (m *message) Payload() []byte {
 	return m.payload
 }
 
@@ -56,7 +56,7 @@ func (m *message) Ack() {
 	m.once.Do(m.ack)
 }
 
-func messageFromPublish(p *packets.Publish, ack func()) Message {
+func messageFromPublish(p *utp.Publish, ack func()) Message {
 	return &message{
 		topic:     p.Topic,
 		messageID: p.MessageID,
@@ -65,8 +65,8 @@ func messageFromPublish(p *packets.Publish, ack func()) Message {
 	}
 }
 
-func newConnectMsgFromOptions(opts *options, server *url.URL) *packets.Connect {
-	m := &packets.Connect{}
+func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
+	m := &utp.Connect{}
 
 	m.CleanSessFlag = opts.cleanSession
 	m.ClientID = opts.clientID
@@ -75,18 +75,16 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *packets.Connect {
 	username := opts.username
 	password := opts.password
 	if server.User != nil {
-		username = server.User.Username()
+		username = []byte(server.User.Username())
 		if pwd, ok := server.User.Password(); ok {
-			password = pwd
+			password = []byte(pwd)
 		}
 	}
 
-	if username != "" {
-		m.UsernameFlag = true
+	if username != nil {
 		m.Username = username
 		//mustn't have password without user as well
-		if password != "" {
-			m.PasswordFlag = true
+		if password != nil {
 			m.Password = password
 		}
 	}

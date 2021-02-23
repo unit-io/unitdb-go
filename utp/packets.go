@@ -1,4 +1,4 @@
-package packets
+package utp
 
 import (
 	"bytes"
@@ -13,10 +13,10 @@ const (
 	CONNECT = uint8(iota + 1)
 	CONNACK
 	PUBLISH
-	PUBACK
-	PUBREC
-	PUBREL
-	PUBCOMP
+	PUBNEW
+	PUBRECEIVE
+	PUBRECEIPT
+	PUBCOMPLETE
 	SUBSCRIBE
 	SUBACK
 	UNSUBSCRIBE
@@ -39,7 +39,7 @@ const (
 	ErrProtocolViolation            = 0xFF
 )
 
-//Packet is the interface all our packets in the line protocol will be implementing
+// Packet is the interface all our packets in the line protocol will be implementing
 type Packet interface {
 	Type() MessageType
 	Info() Info
@@ -50,8 +50,8 @@ type FixedHeader pbx.FixedHeader
 
 // Info returns Qos and MessageID by the Info() function called on the Packet
 type Info struct {
-	Qos       int32
-	MessageID int32
+	DeliveryMode int32
+	MessageID    int32
 }
 
 // ReadPacket unpacks the packet from the provided reader.
@@ -69,7 +69,7 @@ func ReadPacket(r io.Reader) (Packet, error) {
 		return &Disconnect{}, nil
 	}
 
-	msg := make([]byte, fh.RemainingLength)
+	msg := make([]byte, fh.MessageLength)
 	_, err := io.ReadFull(r, msg)
 	if err != nil {
 		return nil, err
@@ -78,26 +78,18 @@ func ReadPacket(r io.Reader) (Packet, error) {
 	// unpack the body
 	var pkt Packet
 	switch uint8(fh.MessageType) {
-	case CONNECT:
-		pkt = unpackConnect(msg)
 	case CONNACK:
 		pkt = unpackConnack(msg)
 	case PUBLISH:
 		pkt = unpackPublish(msg)
-	case PUBACK:
-		pkt = unpackPuback(msg)
-	case PUBREC:
-		pkt = unpackPubrec(msg)
-	case PUBREL:
-		pkt = unpackPubrel(msg)
-	case PUBCOMP:
-		pkt = unpackPubcomp(msg)
-	case SUBSCRIBE:
-		pkt = unpackSubscribe(msg)
+	case PUBNEW:
+		pkt = unpackPubnew(msg)
+	case PUBRECEIPT:
+		pkt = unpackPubreceipt(msg)
+	case PUBCOMPLETE:
+		pkt = unpackPubcomplete(msg)
 	case SUBACK:
 		pkt = unpackSuback(msg)
-	case UNSUBSCRIBE:
-		pkt = unpackUnsubscribe(msg)
 	case UNSUBACK:
 		pkt = unpackUnsuback(msg)
 	default:
@@ -112,32 +104,22 @@ func Encode(pkt Packet) (bytes.Buffer, error) {
 	switch uint8(pkt.Type()) {
 	case PINGREQ:
 		return encodePingreq(*pkt.(*Pingreq))
-	case PINGRESP:
-		return encodePingresp(*pkt.(*Pingresp))
 	case CONNECT:
 		return encodeConnect(*pkt.(*Connect))
-	case CONNACK:
-		return encodeConnack(*pkt.(*Connack))
 	case DISCONNECT:
 		return encodeDisconnect(*pkt.(*Disconnect))
 	case SUBSCRIBE:
 		return encodeSubscribe(*pkt.(*Subscribe))
-	case SUBACK:
-		return encodeSuback(*pkt.(*Suback))
 	case UNSUBSCRIBE:
 		return encodeUnsubscribe(*pkt.(*Unsubscribe))
-	case UNSUBACK:
-		return encodeUnsuback(*pkt.(*Unsuback))
 	case PUBLISH:
 		return encodePublish(*pkt.(*Publish))
-	case PUBACK:
-		return encodePuback(*pkt.(*Puback))
-	case PUBREC:
-		return encodePubrec(*pkt.(*Pubrec))
-	case PUBREL:
-		return encodePubrel(*pkt.(*Pubrel))
-	case PUBCOMP:
-		return encodePubcomp(*pkt.(*Pubcomp))
+	case PUBRECEIVE:
+		return encodePubreceive(*pkt.(*Pubreceive))
+	case PUBRECEIPT:
+		return encodePubreceipt(*pkt.(*Pubreceipt))
+	case PUBCOMPLETE:
+		return encodePubcomplete(*pkt.(*Pubcomplete))
 	}
 	return bytes.Buffer{}, nil
 }

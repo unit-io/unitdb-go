@@ -22,10 +22,10 @@ type ConnectionLostHandler func(Client, error)
 
 type options struct {
 	servers                 []*url.URL
-	clientID                string
+	clientID                []byte
 	insecureFlag            bool
-	username                string
-	password                string
+	username                []byte
+	password                []byte
 	cleanSession            bool
 	tLSConfig               *tls.Config
 	keepAlive               int64
@@ -57,7 +57,7 @@ func (o *options) addServer(target string) {
 	o.servers = append(o.servers, uri)
 }
 
-func (o *options) setClientID(clientID string) {
+func (o *options) setClientID(clientID []byte) {
 	o.clientID = clientID
 }
 
@@ -89,15 +89,15 @@ func newFuncOption(f func(*options)) *fOption {
 func WithDefaultOptions() Options {
 	return newFuncOption(func(o *options) {
 		o.servers = nil
-		o.clientID = ""
+		o.clientID = nil
 		o.insecureFlag = false
-		o.username = ""
-		o.password = ""
-		o.cleanSession = false
-		o.keepAlive = 60
-		o.pingTimeout = 60 * time.Second
-		o.connectTimeout = 60 * time.Second
-		o.writeTimeout = 60 * time.Second // 0 represents timeout disabled
+		o.username = nil
+		o.password = nil
+		o.cleanSession = true
+		o.keepAlive = 30
+		o.pingTimeout = 30 * time.Second
+		o.connectTimeout = 30 * time.Second
+		o.writeTimeout = 30 * time.Second // 0 represents timeout disabled
 		o.storePath = "/tmp/unitdb"
 		o.storeSize = 1 << 27
 		if o.writeTimeout > 0 {
@@ -129,7 +129,7 @@ func AddServer(target string) Options {
 }
 
 // WithClientID  returns an Option which makes client connection and set ClientID
-func WithClientID(clientID string) Options {
+func WithClientID(clientID []byte) Options {
 	return newFuncOption(func(o *options) {
 		o.clientID = clientID
 	})
@@ -145,7 +145,7 @@ func WithInsecure() Options {
 }
 
 // WithUserName returns an Option which makes client connection and pass UserName
-func WithUserNamePassword(userName, password string) Options {
+func WithUserNamePassword(userName, password []byte) Options {
 	return newFuncOption(func(o *options) {
 		o.username = userName
 		o.password = password
@@ -259,17 +259,17 @@ func WithResumeSubs() Options {
 
 // -------------------------------------------------------------
 type pubOptions struct {
-	qos      int32
-	retained bool
+	deliveryMode int32
+	ttl          string
 }
 
-// SubOptions it contains configurable options for Subscribe
+// PubOptions it contains configurable options for Publish
 type PubOptions interface {
 	set(*pubOptions)
 }
 
-// fSubOption wraps a function that modifies options into an
-// implementation of the SubOption interface.
+// fPubOption wraps a function that modifies options into an
+// implementation of the PubOption interface.
 type fPubOption struct {
 	f func(*pubOptions)
 }
@@ -284,22 +284,28 @@ func newFuncPubOption(f func(*pubOptions)) *fPubOption {
 	}
 }
 
-func WithPubQos(qos int32) PubOptions {
+// WithPubDeliveryMode sets DeliveryMode of publish packet.
+// 0 EXPRESS
+// 1 RELIEABLE
+// 2 BATCH
+func WithPubDeliveryMode(deliveryMode int32) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
-		o.qos = qos
+		o.deliveryMode = deliveryMode
 	})
 }
 
-func WithRetained() PubOptions {
+// WithTTL allows to specify time to live for a publish packet.
+func WithTTL(ttl string) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
-		o.retained = true
+		o.ttl = ttl
 	})
 }
 
 // -------------------------------------------------------------
 type subOptions struct {
-	qos      int32
-	callback MessageHandler
+	deliveryMode int32
+	last         string
+	callback     MessageHandler
 }
 
 // SubOptions it contains configurable options for Subscribe
@@ -323,9 +329,20 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 	}
 }
 
-func WithSubQos(qos int32) SubOptions {
+// WithSubDeliveryMode sets DeliveryMode of a subscription.
+// 0 EXPRESS
+// 1 RELIEABLE
+// 2 BATCH
+func WithSubDeliveryMode(deliveryMode int32) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
-		o.qos = qos
+		o.deliveryMode = deliveryMode
+	})
+}
+
+// WithLast allows to specify duration to retrive stored messages on a new subscription.
+func WithLast(last string) SubOptions {
+	return newFuncSubOption(func(o *subOptions) {
+		o.last = last
 	})
 }
 

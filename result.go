@@ -5,14 +5,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unit-io/unitdb-go/packets"
+	"github.com/unit-io/unitdb-go/utp"
 )
 
 // PacketAndResult is a type that contains both a Packet and a Result.
 // This type is passed via channels between client connection interface and
 // goroutines responsible for sending and receiving messages from server
 type PacketAndResult struct {
-	p packets.Packet
+	p utp.Packet
 	r Result
 }
 
@@ -109,24 +109,24 @@ func (r *PublishResult) MessageID() int32 {
 	return r.messageID
 }
 
-//TopicQOSTuple is a struct for pairing the Qos and topic together
-//for the QOS' pairs in unsubscribe and subscribe
-type TopicQOSTuple struct {
-	Qos   uint8
-	Topic string
+// Subscription is a struct for pairing the DeliveryMode and topic together
+// for the delivery mode's pairs in unsubscribe and subscribe
+type Subscription struct {
+	DeliveryMode int32
+	Topic        []byte
 }
 
 // SubscribeResult is an extension of result containing the extra fields
 // required to provide information about calls to Subscribe()
 type SubscribeResult struct {
 	result
-	subs      []TopicQOSTuple
+	subs      []Subscription
 	subResult map[string]byte
 	messageID int32
 }
 
 // Result returns a map of topics that were subscribed to along with
-// the matching return code from the server. This is either the Qos
+// the matching return code from the server. This is either the DeliveryMode
 // value of the subscription or an error code.
 func (r *SubscribeResult) Result() map[string]byte {
 	r.m.RLock()
@@ -145,4 +145,17 @@ type UnsubscribeResult struct {
 // required to provide information about calls to Disconnect()
 type DisconnectResult struct {
 	result
+}
+
+// PutResult is an extension of result containing the extra fields
+// required to provide information about calls to Put()
+type PutResult struct {
+	result
+	messageID int32
+}
+
+// MessageID returns the message ID that was assigned to the
+// Publish packet when it was sent to the server
+func (r *PutResult) MessageID() int32 {
+	return r.messageID
 }

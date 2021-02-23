@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	adapter "github.com/unit-io/unitdb-go/db"
-	"github.com/unit-io/unitdb-go/packets"
+	"github.com/unit-io/unitdb-go/utp"
 )
 
 var adp adapter.Adapter
@@ -81,90 +81,112 @@ type MessageLog struct{}
 var Log MessageLog
 
 // handle which outgoing messages are stored
-func (l *MessageLog) PersistOutbound(key uint64, msg packets.Packet) {
-	switch msg.Info().Qos {
+func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
+	switch msg.Info().DeliveryMode {
 	case 0:
 		switch msg.(type) {
-		case *packets.Puback, *packets.Pubcomp:
-			// Sending puback. delete matching publish
+		case *utp.Pubcomplete:
+			// Sending pubcomp. delete matching publish
 			// from inbound
-			adp.DeleteMessage(key)
-		}
-	case 1:
-		switch msg.(type) {
-		case *packets.Publish, *packets.Pubrel, *packets.Subscribe, *packets.Unsubscribe:
+			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
+			adp.DeleteMessage(ikey)
+			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Publish:
 			// Sending publish. store in obound
-			// until puback received
-			m, err := packets.Encode(msg)
+			// until pubcomp received
+			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
+			m, err := utp.Encode(msg)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			adp.PutMessage(key, m.Bytes())
-		default:
+			adp.PutMessage(okey, m.Bytes())
+			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		}
-	case 2:
+	case 1, 2:
 		switch msg.(type) {
-		case *packets.Publish:
-			// Sending publish. store in outbound
-			// until pubrel received
-			m, err := packets.Encode(msg)
+		case *utp.Pubreceipt:
+			// Sending pubrec. delete matching pubnew for RELIABLE delivery mode
+			// from inbound
+			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
+			adp.DeleteMessage(ikey)
+			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Publish, *utp.Pubreceive, *utp.Subscribe, *utp.Unsubscribe:
+			// Sending publish. store in obound
+			// until pubcomp received
+			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
+			m, err := utp.Encode(msg)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			adp.PutMessage(key, m.Bytes())
+			adp.PutMessage(okey, m.Bytes())
+			fmt.Println("MessageLog::PersistOutbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		default:
+			fmt.Println("Store::PersistOutbound: Invalid message type")
 		}
 	}
 }
 
 // handle which incoming messages are stored
-func (l *MessageLog) PersistInbound(key uint64, msg packets.Packet) {
-	switch msg.Info().Qos {
+func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
+	switch msg.Info().DeliveryMode {
 	case 0:
 		switch msg.(type) {
-		case *packets.Puback, *packets.Suback, *packets.Unsuback, *packets.Pubcomp:
-			// Received a puback. delete matching publish
+		case *utp.Pubcomplete, *utp.Suback, *utp.Unsuback:
+			// Received a pubcomp. delete matching publish for EXPRESS delivery mode
+			// or pubrecv for RELIABLE delivery mode from obound
+			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
+			adp.DeleteMessage(okey)
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Publish:
+			// Received a publish. store it in ibound
+			// until pubcomp received
+			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
+			m, err := utp.Encode(msg)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			adp.PutMessage(ikey, m.Bytes())
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Pingresp, *utp.Connack:
+		default:
+			fmt.Println("Store::PersistInbound: Invalid message type")
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		}
+	case 1, 2:
+		switch msg.(type) {
+		case *utp.Pubreceipt:
+			// Received a pubrec. delete matching publish
 			// from obound
-			adp.DeleteMessage(key)
-		case *packets.Publish, *packets.Pubrec, *packets.Pingresp, *packets.Connack:
-		default:
-		}
-	case 1:
-		switch msg.(type) {
-		case *packets.Publish, *packets.Pubrel:
+			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
+			adp.DeleteMessage(okey)
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Pubnew:
 			// Received a publish. store it in ibound
-			// until puback sent
-			m, err := packets.Encode(msg)
+			// until pubrec received
+			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
+			m, err := utp.Encode(msg)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			adp.PutMessage(key, m.Bytes())
+			adp.PutMessage(ikey, m.Bytes())
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
+		case *utp.Publish:
 		default:
-		}
-	case 2:
-		switch msg.(type) {
-		case *packets.Publish:
-			// Received a publish. store it in ibound
-			// until pubrel received
-			m, err := packets.Encode(msg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(key, m.Bytes())
-		default:
+			fmt.Println("Store::PersistInbound: Invalid message type")
+			fmt.Println("MessageLog::PersistInbound: ConnID, MessageType, DeliveryMode, MessageID ", blockID, msg.Type(), msg.Info().DeliveryMode, msg.Info().MessageID)
 		}
 	}
 }
 
 // Get performs a query and attempts to fetch message for the given key
-func (l *MessageLog) Get(key uint64) packets.Packet {
+func (l *MessageLog) Get(key uint64) utp.Packet {
 	if raw, err := adp.GetMessage(key); raw != nil && err == nil {
 		r := bytes.NewReader(raw)
-		if msg, err := packets.ReadPacket(r); err == nil {
+		if msg, err := utp.ReadPacket(r); err == nil {
 			return msg
 		}
 	}

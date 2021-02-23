@@ -9,14 +9,14 @@ import (
 	"net"
 	"time"
 
-	"github.com/unit-io/unitdb-go/packets"
+	"github.com/unit-io/unitdb-go/utp"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Packet
-func Connect(conn net.Conn, cm *packets.Connect) (int32, int32, bool) {
-	m, err := packets.Encode(cm)
+func Connect(conn net.Conn, cm *utp.Connect) (int32, int32, bool) {
+	m, err := utp.Encode(cm)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -30,17 +30,17 @@ func Connect(conn net.Conn, cm *packets.Connect) (int32, int32, bool) {
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
 func verifyCONNACK(conn net.Conn) (int32, int32, bool) {
-	ca, err := packets.ReadPacket(conn)
+	ca, err := utp.ReadPacket(conn)
 	if err != nil {
-		return packets.ErrNetworkError, packets.ErrNetworkError, false
+		return utp.ErrNetworkError, utp.ErrNetworkError, false
 	}
 	if ca == nil {
-		return packets.ErrNetworkError, packets.ErrNetworkError, false
+		return utp.ErrNetworkError, utp.ErrNetworkError, false
 	}
 
-	msg, ok := ca.(*packets.Connack)
+	msg, ok := ca.(*utp.Connack)
 	if !ok {
-		return packets.ErrNetworkError, packets.ErrNetworkError, false
+		return utp.ErrNetworkError, utp.ErrNetworkError, false
 	}
 
 	return msg.ReturnCode, msg.ConnID, true
@@ -48,10 +48,8 @@ func verifyCONNACK(conn net.Conn) (int32, int32, bool) {
 
 // Handle handles incoming messages
 func (c *client) readLoop(ctx context.Context) error {
-	// c.closeW.Add(1)
 	defer func() {
 		defer log.Println("conn.Handler: closing...")
-		// c.closeW.Done()
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
@@ -66,8 +64,9 @@ func (c *client) readLoop(ctx context.Context) error {
 			return nil
 		default:
 			// Decode an incoming packet
-			msg, err := packets.ReadPacket(reader)
+			msg, err := utp.ReadPacket(reader)
 			if err != nil {
+				fmt.Println("conn::readLoop: read packet error ", err)
 				return err
 			}
 
@@ -76,6 +75,7 @@ func (c *client) readLoop(ctx context.Context) error {
 
 			// Message handler
 			if err := c.handler(msg); err != nil {
+				fmt.Println("conn::readLoop: message handler error ", err)
 				return err
 			}
 		}
@@ -83,47 +83,47 @@ func (c *client) readLoop(ctx context.Context) error {
 }
 
 // handle handles inbound messages.
-func (c *client) handler(msg packets.Packet) error {
+func (c *client) handler(msg utp.Packet) error {
 	c.updateLastAction()
 
 	switch m := msg.(type) {
-	case *packets.Pingresp:
+	case *utp.Pingresp:
 		c.updateLastTouched()
-	case *packets.Suback:
+		fmt.Println("conn::handler: pingresp ", c.lastTouched.Load().(time.Time))
+	case *utp.Suback:
 		mId := c.inboundID(m.MessageID)
 		c.getType(mId).flowComplete()
 		c.freeID(mId)
-	case *packets.Unsuback:
+	case *utp.Unsuback:
 		mId := c.inboundID(m.MessageID)
 		c.getType(mId).flowComplete()
 		c.freeID(mId)
-	case *packets.Publish:
-		c.pub <- msg.(*packets.Publish)
-	case *packets.Puback:
-		mId := c.inboundID(m.MessageID)
-		c.getType(mId).flowComplete()
-		c.freeID(mId)
-	case *packets.Pubrec:
-		p := packets.Packet(&packets.Pubrel{MessageID: m.MessageID, Qos: m.Qos})
-		c.send <- &PacketAndResult{p: p}
-	case *packets.Pubrel:
-		p := packets.Packet(&packets.Pubcomp{MessageID: m.MessageID})
+	case *utp.Publish:
+		c.pub <- msg.(*utp.Publish)
+	case *utp.Pubnew:
+		p := utp.Packet(&utp.Pubreceive{MessageID: m.MessageID})
 		// persist outbound
 		c.storeOutbound(p)
 		c.send <- &PacketAndResult{p: p}
-	case *packets.Pubcomp:
+	case *utp.Pubreceipt:
+		p := utp.Packet(&utp.Pubcomplete{MessageID: m.MessageID})
+		// persist outbound
+		c.storeOutbound(p)
+		c.send <- &PacketAndResult{p: p}
+	case *utp.Pubcomplete:
 		mId := c.inboundID(m.MessageID)
-		c.getType(mId).flowComplete()
-		c.freeID(mId)
+		fmt.Println("conn::handler: pubcomp MessageID, InboundID ", m.MessageID, mId)
+		r := c.getType(mId)
+		if r != nil {
+			r.flowComplete()
+			c.freeID(mId)
+		}
 	}
 
 	return nil
 }
 
 func (c *client) writeLoop(ctx context.Context) {
-	// c.closeW.Add(1)
-	// defer c.closeW.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -136,18 +136,12 @@ func (c *client) writeLoop(ctx context.Context) {
 				return
 			}
 			switch m := msg.p.(type) {
-			case *packets.Publish:
-				if m.Qos == 0 {
-					msg.r.(*PublishResult).flowComplete()
-					mId := c.inboundID(m.MessageID)
-					c.freeID(mId)
-				}
-			case *packets.Disconnect:
+			case *utp.Disconnect:
 				msg.r.(*DisconnectResult).flowComplete()
 				mId := c.inboundID(m.MessageID)
 				c.freeID(mId)
 			}
-			m, err := packets.Encode(msg.p)
+			m, err := utp.Encode(msg.p)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -158,9 +152,6 @@ func (c *client) writeLoop(ctx context.Context) {
 }
 
 func (c *client) dispatcher(ctx context.Context) {
-	// c.closeW.Add(1)
-	// defer c.closeW.Done()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,7 +166,10 @@ func (c *client) dispatcher(ctx context.Context) {
 			m := messageFromPublish(msg, ack(c, msg))
 			// dispatch message to default callback function
 			handler := c.callbacks[0]
-			handler(c, m)
+			go func() {
+				handler(c, m)
+				m.Ack()
+			}()
 		}
 	}
 }
@@ -183,9 +177,6 @@ func (c *client) dispatcher(ctx context.Context) {
 // keepalive - Send ping when connection unused for set period
 // connection passed in to avoid race condition on shutdown
 func (c *client) keepalive(ctx context.Context) {
-	// c.closeW.Add(1)
-	// defer c.closeW.Done()
-
 	var pingInterval int64
 	var pingSent time.Time
 
@@ -210,13 +201,15 @@ func (c *client) keepalive(ctx context.Context) {
 			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int64(time.Second)))
 			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
-			if lastAction.After(live) && lastTouched.Before(timeout) {
-				ping := &packets.Pingreq{}
-				m, err := packets.Encode(ping)
+			// if lastAction.After(live) && lastTouched.Before(timeout) {
+			if lastAction.After(live) || lastTouched.After(live) {
+				ping := &utp.Pingreq{}
+				m, err := utp.Encode(ping)
 				if err != nil {
 					fmt.Println(err)
 				}
 				c.conn.Write(m.Bytes())
+				c.updateLastTouched()
 				pingSent = TimeNow()
 			}
 			if lastTouched.Before(timeout) && pingSent.Before(timeout) {
@@ -229,19 +222,22 @@ func (c *client) keepalive(ctx context.Context) {
 }
 
 // ack acknowledges a packet
-func ack(c *client, packet *packets.Publish) func() {
+func ack(c *client, pkt *utp.Publish) func() {
 	return func() {
-		switch packet.Qos {
-		case 2:
-			p := packets.Packet(&packets.Pubrec{MessageID: packet.MessageID, Qos: packet.Qos})
-			c.send <- &PacketAndResult{p: p}
-		case 1:
-			p := packets.Packet(&packets.Puback{MessageID: packet.MessageID})
+		fmt.Println("conn::ack: pub, deliveryMode ", pkt.Info().DeliveryMode)
+		switch pkt.Info().DeliveryMode {
+		// DeliveryMode RELIABLE or BATCH
+		case 1, 2:
+			p := utp.Packet(&utp.Pubreceipt{MessageID: pkt.MessageID})
 			// persist outbound
 			c.storeOutbound(p)
 			c.send <- &PacketAndResult{p: p}
+		// DeliveryMode Express
 		case 0:
-			// do nothing, since there is no need to send an ack packet back
+			p := utp.Packet(&utp.Pubcomplete{MessageID: pkt.MessageID})
+			// persist outbound
+			c.storeOutbound(p)
+			c.send <- &PacketAndResult{p: p}
 		}
 	}
 }

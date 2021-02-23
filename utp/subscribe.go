@@ -1,4 +1,4 @@
-package packets
+package utp
 
 import (
 	"bytes"
@@ -8,35 +8,35 @@ import (
 )
 
 type (
-	Subscriber pbx.Subscriber
-	Subscribe  struct {
-		MessageID   int32
-		Subscribers []*Subscriber
+	Subscription pbx.Subscription
+	Subscribe    struct {
+		MessageID     int32
+		Subscriptions []*Subscription
 	}
 	Suback      pbx.Suback
 	Unsubscribe struct {
-		MessageID   int32
-		Subscribers []*Subscriber
+		MessageID     int32
+		Subscriptions []*Subscription
 	}
 	Unsuback pbx.Unsuback
 )
 
 func encodeSubscribe(s Subscribe) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	var subs []*pbx.Subscriber
-	for _, sub := range s.Subscribers {
-		s := pbx.Subscriber(*sub)
+	var subs []*pbx.Subscription
+	for _, sub := range s.Subscriptions {
+		s := pbx.Subscription(*sub)
 		subs = append(subs, &s)
 	}
 	sub := pbx.Subscribe{
-		MessageID:   s.MessageID,
-		Subscribers: subs,
+		MessageID:     s.MessageID,
+		Subscriptions: subs,
 	}
 	pkt, err := proto.Marshal(&sub)
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_SUBSCRIBE, RemainingLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_SUBSCRIBE, MessageLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -47,9 +47,9 @@ func (s *Subscribe) Type() MessageType {
 	return MessageType(pbx.MessageType_SUBSCRIBE)
 }
 
-// Info returns Qos and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this packet.
 func (s *Subscribe) Info() Info {
-	return Info{Qos: 1, MessageID: s.MessageID}
+	return Info{DeliveryMode: 1, MessageID: s.MessageID}
 }
 
 func encodeSuback(s Suback) (bytes.Buffer, error) {
@@ -59,7 +59,7 @@ func encodeSuback(s Suback) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_SUBACK, RemainingLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_SUBACK, MessageLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -70,27 +70,27 @@ func (s *Suback) Type() MessageType {
 	return MessageType(pbx.MessageType_SUBACK)
 }
 
-// Info returns Qos and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this packet.
 func (s *Suback) Info() Info {
-	return Info{Qos: 0, MessageID: s.MessageID}
+	return Info{DeliveryMode: 0, MessageID: s.MessageID}
 }
 
 func encodeUnsubscribe(u Unsubscribe) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	var subs []*pbx.Subscriber
-	for _, sub := range u.Subscribers {
-		s := pbx.Subscriber(*sub)
+	var subs []*pbx.Subscription
+	for _, sub := range u.Subscriptions {
+		s := pbx.Subscription(*sub)
 		subs = append(subs, &s)
 	}
 	unsub := pbx.Unsubscribe{
-		MessageID:   u.MessageID,
-		Subscribers: subs,
+		MessageID:     u.MessageID,
+		Subscriptions: subs,
 	}
 	pkt, err := proto.Marshal(&unsub)
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBSCRIBE, RemainingLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBSCRIBE, MessageLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -101,9 +101,9 @@ func (u *Unsubscribe) Type() MessageType {
 	return MessageType(pbx.MessageType_UNSUBSCRIBE)
 }
 
-// Info returns Qos and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this packet.
 func (u *Unsubscribe) Info() Info {
-	return Info{Qos: 1, MessageID: u.MessageID}
+	return Info{DeliveryMode: 1, MessageID: u.MessageID}
 }
 
 func encodeUnsuback(u Unsuback) (bytes.Buffer, error) {
@@ -113,7 +113,7 @@ func encodeUnsuback(u Unsuback) (bytes.Buffer, error) {
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBACK, RemainingLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_UNSUBACK, MessageLength: int32(len(pkt))}
 	msg = fh.pack()
 	_, err = msg.Write(pkt)
 	return msg, err
@@ -124,26 +124,9 @@ func (u *Unsuback) Type() MessageType {
 	return MessageType(pbx.MessageType_UNSUBACK)
 }
 
-// Info returns Qos and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this packet.
 func (u *Unsuback) Info() Info {
-	return Info{Qos: 0, MessageID: u.MessageID}
-}
-
-func unpackSubscribe(data []byte) Packet {
-	var pkt pbx.Subscribe
-	proto.Unmarshal(data, &pkt)
-	var subs []*Subscriber
-	for _, sub := range pkt.Subscribers {
-		s := &Subscriber{
-			Topic: sub.Topic,
-			Qos:   sub.Qos,
-		}
-		subs = append(subs, s)
-	}
-	return &Subscribe{
-		MessageID:   pkt.MessageID,
-		Subscribers: subs,
-	}
+	return Info{DeliveryMode: 0, MessageID: u.MessageID}
 }
 
 func unpackSuback(data []byte) Packet {
@@ -151,23 +134,6 @@ func unpackSuback(data []byte) Packet {
 	proto.Unmarshal(data, &pkt)
 	return &Suback{
 		MessageID: pkt.MessageID,
-		Qos:       pkt.Qos,
-	}
-}
-
-func unpackUnsubscribe(data []byte) Packet {
-	var pkt pbx.Unsubscribe
-	proto.Unmarshal(data, &pkt)
-	var subs []*Subscriber
-	for _, sub := range pkt.Subscribers {
-		s := &Subscriber{
-			Topic: sub.Topic,
-		}
-		subs = append(subs, s)
-	}
-	return &Unsubscribe{
-		MessageID:   pkt.MessageID,
-		Subscribers: subs,
 	}
 }
 

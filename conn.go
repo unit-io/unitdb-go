@@ -11,20 +11,14 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/unit-io/unitdb-go/packets"
 	"github.com/unit-io/unitdb-go/store"
+	"github.com/unit-io/unitdb-go/utp"
 	plugins "github.com/unit-io/unitdb/server/common"
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"google.golang.org/grpc"
 
 	// Database store
 	_ "github.com/unit-io/unitdb-go/db/unitdb"
-)
-
-// Various constant parts of the Client Connection.
-const (
-	// MasterContract contract is default contract used for topics if client program does not specify Contract in the request
-	MasterContract = uint32(3376684800)
 )
 
 type Client interface {
@@ -40,30 +34,29 @@ type Client interface {
 	// the client wait group is done.
 	// The context used grpc stream to signal context done.
 	DisconnectContext(ctx context.Context) error
-	// Publish will publish a message with the specified QoS and content
+	// Publish will publish a message with the specified DeliveryMode and content
 	// to the specified topic.
-	Publish(topic, payload string, pubOpts ...PubOptions) Result
+	Publish(topic, payload []byte, pubOpts ...PubOptions) Result
 	// Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 	// a message is published on the topic provided, or nil for the default handler
-	Subscribe(topic string, subOpts ...SubOptions) Result
+	Subscribe(topic []byte, subOpts ...SubOptions) Result
 	// Unsubscribe will end the subscription from each of the topics provided.
 	// Messages published to those topics from other clients will no longer be
 	// received.
-	Unsubscribe(topics ...string) Result
+	Unsubscribe(topics ...[]byte) Result
 }
 type client struct {
 	mu         sync.Mutex // mutex for the connection
 	opts       *options
 	context    context.Context    // context for the client
 	cancel     context.CancelFunc // cancellation function
-	contract   uint32
-	messageIds          // local identifier of messages
-	connID     int32    // Theunique id of the connection.
-	conn       net.Conn // the network connection
+	messageIds                    // local identifier of messages
+	connID     int32              // Theunique id of the connection.
+	conn       net.Conn           // the network connection
 	stream     grpc.Stream
 	send       chan *PacketAndResult
-	recv       chan packets.Packet
-	pub        chan *packets.Publish
+	recv       chan utp.Packet
+	pub        chan *utp.Publish
 	callbacks  map[uint64]MessageHandler
 
 	// Time when the keepalive session was last refreshed
@@ -83,11 +76,10 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 		opts:       new(options),
 		context:    ctx,
 		cancel:     cancel,
-		contract:   MasterContract,
 		messageIds: messageIds{index: make(map[MID]Result)},
 		send:       make(chan *PacketAndResult, 1), // buffered
-		recv:       make(chan packets.Packet),
-		pub:        make(chan *packets.Publish),
+		recv:       make(chan utp.Packet),
+		pub:        make(chan *utp.Publish),
 		callbacks:  make(map[uint64]MessageHandler),
 		// close
 		closeC: make(chan struct{}),
@@ -98,7 +90,7 @@ func NewClient(target string, clientID string, opts ...Options) (Client, error) 
 	}
 	// set default options
 	c.opts.addServer(target)
-	c.opts.setClientID(clientID)
+	c.opts.setClientID([]byte(clientID))
 	c.callbacks[0] = c.opts.defaultMessageHandler
 
 	// Open database connection
@@ -137,7 +129,7 @@ func (c *client) close() error {
 
 	// Signal all goroutines.
 	close(c.closeC)
-	// time.Sleep(c.opts.WriteTimeout)
+
 	// Wait for all goroutines to exit.
 	c.closeW.Wait()
 	close(c.send)
@@ -215,7 +207,8 @@ func (c *client) attemptConnection(ctx context.Context) error {
 		// get Connect message from options.
 		cm := newConnectMsgFromOptions(c.opts, url)
 		rc, connId, _ := Connect(c.conn, cm)
-		if rc == packets.Accepted {
+		fmt.Println("conn::attempConnection: connID ", uint32(connId))
+		if rc == utp.Accepted {
 			c.connID = connId
 			c.messageIds.reset(MID(c.connID))
 			break // successfully connected
@@ -239,7 +232,7 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 		return nil
 	}
 	defer c.close()
-	p := &packets.Disconnect{}
+	p := &utp.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
 	c.send <- &PacketAndResult{p: p, r: r}
 	_, err := r.Get(ctx, c.opts.writeTimeout)
@@ -261,9 +254,9 @@ func (c *client) internalConnLost(err error) {
 	fmt.Println("internalConnLost exiting")
 }
 
-// Publish will publish a message with the specified QoS and content
+// Publish will publish a message with the specified DeliveryMode and content
 // to the specified topic.
-func (c *client) Publish(topic, payload string, pubOpts ...PubOptions) Result {
+func (c *client) Publish(topic, payload []byte, pubOpts ...PubOptions) Result {
 	r := &PublishResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
@@ -275,19 +268,19 @@ func (c *client) Publish(topic, payload string, pubOpts ...PubOptions) Result {
 		opt.set(opts)
 	}
 
-	fh := packets.FixedHeader{Qos: opts.qos, Retain: opts.retained}
-	pub := &packets.Publish{}
+	pub := &utp.Publish{}
 	pub.Topic = topic
 	pub.Payload = payload
-	pub.Qos = opts.qos
+	pub.DeliveryMode = opts.deliveryMode
+	pub.Ttl = opts.ttl
 
-	if fh.Qos != 0 && pub.MessageID == 0 {
+	if pub.MessageID == 0 {
 		mID := c.nextID(r)
 		pub.MessageID = c.outboundID(mID)
 	}
 	publishWaitTimeout := c.opts.writeTimeout
 	if publishWaitTimeout == 0 {
-		publishWaitTimeout = c.opts.writeTimeout
+		publishWaitTimeout = time.Second * 30
 	}
 	// persist outbound
 	c.storeOutbound(pub)
@@ -302,7 +295,7 @@ func (c *client) Publish(topic, payload string, pubOpts ...PubOptions) Result {
 
 // Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
-func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
+func (c *client) Subscribe(topic []byte, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
@@ -313,8 +306,8 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 		opt.set(opts)
 	}
 
-	sub := &packets.Subscribe{}
-	sub.Subscribers = append(sub.Subscribers, &packets.Subscriber{Topic: topic, Qos: opts.qos})
+	sub := &utp.Subscribe{}
+	sub.Subscriptions = append(sub.Subscriptions, &utp.Subscription{Topic: topic, DeliveryMode: opts.deliveryMode, Last: opts.last})
 
 	if opts.callback != nil {
 	}
@@ -342,15 +335,15 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 // Unsubscribe will end the subscription from each of the topics provided.
 // Messages published to those topics from other clients will no longer be
 // received.
-func (c *client) Unsubscribe(topics ...string) Result {
+func (c *client) Unsubscribe(topics ...[]byte) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
-	unsub := &packets.Unsubscribe{}
-	var subs []*packets.Subscriber
+	unsub := &utp.Unsubscribe{}
+	var subs []*utp.Subscription
 	for _, topic := range topics {
-		sub := &packets.Subscriber{Topic: topic}
+		sub := &utp.Subscription{Topic: topic}
 		subs = append(subs, sub)
 	}
-	unsub.Subscribers = subs
+	unsub.Subscriptions = subs
 	if unsub.MessageID == 0 {
 		mID := c.nextID(r)
 		unsub.MessageID = c.outboundID(mID)
@@ -370,9 +363,8 @@ func (c *client) Unsubscribe(topics ...string) Result {
 	return r
 }
 
-// Load all stored messages and resend them to ensure QOS > 1,2 even after an application crash.
+// Load all stored messages and resend them to ensure DeliveryMode even after an application crash.
 func (c *client) resume(subscription bool) {
-	// contract is used as blockId and key prefix
 	keys := store.Log.Keys()
 	for _, k := range keys {
 		msg := store.Log.Get(k)
@@ -383,31 +375,31 @@ func (c *client) resume(subscription bool) {
 		// isKeyOutbound
 		if (k & (1 << 4)) == 0 {
 			switch msg.(type) {
-			case *packets.Subscribe:
+			case *utp.Subscribe:
 				if subscription {
-					p := msg.(*packets.Subscribe)
+					p := msg.(*utp.Subscribe)
 					r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 					r.messageID = info.MessageID
-					var topics []TopicQOSTuple
-					for _, sub := range p.Subscribers {
-						var t TopicQOSTuple
+					var topics []Subscription
+					for _, sub := range p.Subscriptions {
+						var t Subscription
 						t.Topic = sub.Topic
-						t.Qos = uint8(sub.Qos)
+						t.DeliveryMode = sub.DeliveryMode
 						topics = append(topics, t)
 					}
 					r.subs = append(r.subs, topics...)
 					//c.claimID(token, details.MessageID)
 					c.send <- &PacketAndResult{p: msg, r: r}
 				}
-			case *packets.Unsubscribe:
+			case *utp.Unsubscribe:
 				if subscription {
 					r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
 					c.send <- &PacketAndResult{p: msg, r: r}
 				}
 
-			case *packets.Pubrel:
+			case *utp.Pubreceive, *utp.Pubreceipt:
 				c.send <- &PacketAndResult{p: msg, r: nil}
-			case *packets.Publish:
+			case *utp.Publish:
 				r := &PublishResult{result: result{complete: make(chan struct{})}}
 				r.messageID = info.MessageID
 				// c.claimID(token, details.MessageID)
@@ -417,7 +409,7 @@ func (c *client) resume(subscription bool) {
 			}
 		} else {
 			switch msg.(type) {
-			case *packets.Pubrel:
+			case *utp.Pubnew, *utp.Pubreceipt:
 				c.recv <- msg
 			default:
 				store.Log.Delete(k)
@@ -432,12 +424,10 @@ func TimeNow() time.Time {
 }
 
 func (c *client) inboundID(id int32) MID {
-	// return MID(c.connID - ((id << 4) | uint32(1)))
 	return MID(c.connID - id)
 }
 
 func (c *client) outboundID(mid MID) (id int32) {
-	// return c.connID - ((uint32(mid) << 4) | uint32(0))
 	return c.connID - (int32(mid))
 }
 
@@ -451,18 +441,12 @@ func (c *client) updateLastTouched() {
 	c.lastTouched.Store(TimeNow())
 }
 
-func (c *client) storeInbound(m packets.Packet) {
-	blockId := uint64(c.contract)
-	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
-	fmt.Println("inbound: type, key, qos", m.Type(), k, m.Info().Qos)
-	store.Log.PersistInbound(k, m)
+func (c *client) storeInbound(m utp.Packet) {
+	store.Log.PersistInbound(uint32(c.connID), m)
 }
 
-func (c *client) storeOutbound(m packets.Packet) {
-	blockId := uint64(c.contract)
-	k := uint64(c.inboundID(m.Info().MessageID))<<32 + blockId
-	fmt.Println("outbound: type, key, qos", m.Type(), k, m.Info().Qos)
-	store.Log.PersistOutbound(k, m)
+func (c *client) storeOutbound(m utp.Packet) {
+	store.Log.PersistOutbound(uint32(c.connID), m)
 }
 
 // Set closed flag; return true if not already closed.
