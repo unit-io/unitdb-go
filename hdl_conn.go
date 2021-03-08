@@ -15,35 +15,34 @@ import (
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Packet
-func Connect(conn net.Conn, cm *utp.Connect) (int32, int32, bool) {
+func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32) {
 	m, err := utp.Encode(cm)
 	if err != nil {
 		fmt.Println(err)
 	}
 	conn.Write(m.Bytes())
-	rc, cid, sessionPresent := verifyCONNACK(conn)
-	return rc, cid, sessionPresent
+	return verifyCONNACK(conn)
 }
 
 // This function is only used for receiving a connack
 // when the connection is first started.
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
-func verifyCONNACK(conn net.Conn) (int32, int32, bool) {
+func verifyCONNACK(conn net.Conn) (int32, int32, int32) {
 	ca, err := utp.ReadPacket(conn)
 	if err != nil {
-		return utp.ErrNetworkError, utp.ErrNetworkError, false
+		return utp.ErrNetworkError, 0, 0
 	}
 	if ca == nil {
-		return utp.ErrNetworkError, utp.ErrNetworkError, false
+		return utp.ErrNetworkError, 0, 0
 	}
 
 	msg, ok := ca.(*utp.Connack)
 	if !ok {
-		return utp.ErrNetworkError, utp.ErrNetworkError, false
+		return utp.ErrNetworkError, 0, 0
 	}
 
-	return msg.ReturnCode, msg.ConnID, true
+	return msg.ReturnCode, msg.Epoch, msg.ConnID
 }
 
 // Handle handles incoming messages
@@ -116,6 +115,8 @@ func (c *client) handler(msg utp.Packet) error {
 			r.flowComplete()
 			c.freeID(mId)
 		}
+	case *utp.Disconnect:
+		go c.serverDisconnect(errors.New("server initiated disconnect")) // no harm in calling this if the connection is already down (better than stopping!)
 	}
 
 	return nil
@@ -161,11 +162,14 @@ func (c *client) dispatcher(ctx context.Context) {
 				// Channel closed.
 				return
 			}
-			m := messageFromPublish(msg, ack(c, msg))
+			msgs := messageFromPublish(msg, ack(c, msg))
 			// dispatch message to default callback function
 			handler := c.callbacks[0]
 			go func() {
-				handler(c, m)
+				var m Message
+				for _, m = range msgs {
+					handler(c, m)
+				}
 				m.Ack()
 			}()
 		}

@@ -74,6 +74,20 @@ func RegisterAdapter(name string, l adapter.Adapter) {
 	adp = l
 }
 
+// SessionStore is a Session struct to hold methods for persistence mapping for the Session object.
+type SessionStore struct{}
+
+// Session is the anchor for storing/retrieving Session objects
+var Session SessionStore
+
+func (s *SessionStore) Put(key uint64, payload []byte) error {
+	return adp.PutMessage(key, payload)
+}
+
+func (s *SessionStore) Get(key uint64) (raw []byte, err error) {
+	return adp.GetMessage(key)
+}
+
 // MessageLog is a Message struct to hold methods for persistence mapping for the Message object.
 type MessageLog struct{}
 
@@ -183,9 +197,16 @@ func (l *MessageLog) Get(key uint64) utp.Packet {
 	return nil
 }
 
-// Keys performs a query and attempts to fetch all keys.
-func (l *MessageLog) Keys() []uint64 {
-	return adp.Keys()
+// Keys performs a query and attempts to fetch all keys that matches prefix.
+func (l *MessageLog) Keys(prefix uint32) []uint64 {
+	matches := make([]uint64, 0)
+	keys := adp.Keys()
+	for _, key := range keys {
+		if evalPrefix(prefix, key) {
+			matches = append(matches, key)
+		}
+	}
+	return matches
 }
 
 // Delete is used to delete message.
@@ -193,10 +214,16 @@ func (l *MessageLog) Delete(key uint64) {
 	adp.DeleteMessage(key)
 }
 
-// Reset removes all keys from the store.
-func (l *MessageLog) Reset() {
+// Reset removes all keys with the prefix from the store.
+func (l *MessageLog) Reset(prefix uint32) {
 	keys := adp.Keys()
 	for _, key := range keys {
-		adp.DeleteMessage(key)
+		if evalPrefix(prefix, key) {
+			adp.DeleteMessage(key)
+		}
 	}
+}
+
+func evalPrefix(prefix uint32, key uint64) bool {
+	return uint64(prefix) == key&0xFFFFFFFF
 }

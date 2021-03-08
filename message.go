@@ -56,13 +56,17 @@ func (m *message) Ack() {
 	m.once.Do(m.ack)
 }
 
-func messageFromPublish(p *utp.Publish, ack func()) Message {
-	return &message{
-		topic:     p.Topic,
-		messageID: p.MessageID,
-		payload:   p.Payload,
-		ack:       ack,
+func messageFromPublish(p *utp.Publish, ack func()) (msgs []Message) {
+	for _, m := range p.Messages {
+		pubMsg := &message{
+			topic:     m.Topic,
+			messageID: p.MessageID,
+			payload:   m.Payload,
+			ack:       ack,
+		}
+		msgs = append(msgs, pubMsg)
 	}
+	return
 }
 
 func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
@@ -70,6 +74,7 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
 
 	m.CleanSessFlag = opts.cleanSession
 	m.ClientID = opts.clientID
+	m.SessKey = int32(opts.sessionKey)
 	m.InsecureFlag = opts.insecureFlag
 
 	username := opts.username
@@ -90,6 +95,9 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
 	}
 
 	m.KeepAlive = int32(opts.keepAlive)
-
+	m.BatchDuration = int32(opts.batchDuration.Milliseconds())
+	m.BatchByteThreshold = int32(opts.batchByteThreshold)
+	m.BatchCountThreshold = int32(opts.batchCountThreshold)
+	
 	return m
 }

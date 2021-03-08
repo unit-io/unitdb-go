@@ -38,19 +38,6 @@ func (c *Connect) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
 }
 
-func encodeConnack(c Connack) (bytes.Buffer, error) {
-	var msg bytes.Buffer
-	connack := pbx.Connack(c)
-	pkt, err := proto.Marshal(&connack)
-	if err != nil {
-		return msg, err
-	}
-	fh := FixedHeader{MessageType: pbx.MessageType_CONNACK, MessageLength: int32(len(pkt))}
-	msg = fh.pack()
-	_, err = msg.Write(pkt)
-	return msg, err
-}
-
 // Type returns the packet type.
 func (c *Connack) Type() MessageType {
 	return MessageType(pbx.MessageType_CONNACK)
@@ -130,30 +117,13 @@ func (d *Disconnect) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
 }
 
-func unpackConnect(data []byte) Packet {
-	var pkt pbx.Conn
-	proto.Unmarshal(data, &pkt)
-
-	connect := &Connect{
-		ProtoName:     pkt.ProtoName,
-		Version:       int32(pkt.Version),
-		KeepAlive:     int32(pkt.KeepAlive),
-		ClientID:      pkt.ClientID,
-		InsecureFlag:  pkt.InsecureFlag,
-		Username:      pkt.Username,
-		Password:      pkt.Password,
-		CleanSessFlag: pkt.CleanSessFlag,
-	}
-
-	return connect
-}
-
 func unpackConnack(data []byte) Packet {
 	var pkt pbx.Connack
 	proto.Unmarshal(data, &pkt)
 
 	return &Connack{
 		ReturnCode: pkt.ReturnCode,
+		Epoch:      pkt.Epoch,
 		ConnID:     pkt.ConnID,
 	}
 }

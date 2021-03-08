@@ -119,7 +119,13 @@ func main() {
 			*server,
 			*id,
 			// unitdb.WithInsecure(),
+			// unitdb.WithSessionKey(2339641921),
 			unitdb.WithUserNamePassword([]byte(*user), []byte(*password)),
+			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
+				if err != nil {
+					log.Fatal(err)
+				}
+			}),
 			// unitdb.WithCleanSession(),
 		)
 		if err != nil {
@@ -148,6 +154,7 @@ func main() {
 			*server,
 			*id,
 			// unitdb.WithInsecure(),
+			unitdb.WithSessionKey(2339641922),
 			unitdb.WithUserNamePassword([]byte(*user), []byte(*password)),
 			// unitdb.WithCleanSession(),
 			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
@@ -159,6 +166,7 @@ func main() {
 			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
 				recv <- [2][]byte{msg.Topic(), msg.Payload()}
 			}),
+			unitdb.WithBatchDuration(10*time.Second),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -168,7 +176,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe([]byte(*topic), unitdb.WithSubDeliveryMode(1))
+		r := client.Subscribe([]byte(*topic), unitdb.WithSubDeliveryMode(1), unitdb.WithSubDelay(1*time.Second))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)

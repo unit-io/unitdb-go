@@ -8,6 +8,15 @@ import (
 	"time"
 )
 
+const (
+	defaultBatchDuration = 100 * time.Millisecond
+	maxBatchDuration     = 15 * time.Second
+	// publish request (containing a batch of messages) in bytes. Must be lower
+	// than the gRPC limit of 4 MiB.
+	maxPubBytes = 3.5 * 1024 * 1024
+	maxPubCount = 1000
+)
+
 // MessageHandler is a callback type which can be set to be
 // executed upon the arrival of messages published to topics
 // to which the client is subscribed.
@@ -23,6 +32,7 @@ type ConnectionLostHandler func(Client, error)
 type options struct {
 	servers                 []*url.URL
 	clientID                []byte
+	sessionKey              uint32
 	insecureFlag            bool
 	username                []byte
 	password                []byte
@@ -38,6 +48,9 @@ type options struct {
 	connectionHandler       ConnectionHandler
 	connectionLostHandler   ConnectionLostHandler
 	writeTimeout            time.Duration
+	batchDuration           time.Duration
+	batchByteThreshold      int
+	batchCountThreshold     int
 	resumeSubs              bool
 }
 
@@ -90,6 +103,7 @@ func WithDefaultOptions() Options {
 	return newFuncOption(func(o *options) {
 		o.servers = nil
 		o.clientID = nil
+		o.sessionKey = 0
 		o.insecureFlag = false
 		o.username = nil
 		o.password = nil
@@ -105,6 +119,9 @@ func WithDefaultOptions() Options {
 		} else {
 			o.storeLogReleaseDuration = 1 * time.Minute // must be greater than WriteTimeout
 		}
+		o.batchDuration = defaultBatchDuration
+		o.batchByteThreshold = maxPubBytes
+		o.batchCountThreshold = maxPubCount
 		o.resumeSubs = false
 	})
 }
@@ -132,6 +149,13 @@ func AddServer(target string) Options {
 func WithClientID(clientID []byte) Options {
 	return newFuncOption(func(o *options) {
 		o.clientID = clientID
+	})
+}
+
+// WithSessionKey  returns an Option which makes client connection with an existing SessionKey
+func WithSessionKey(sessKey uint32) Options {
+	return newFuncOption(func(o *options) {
+		o.sessionKey = sessKey
 	})
 }
 
@@ -226,7 +250,7 @@ func WithStoreLogReleaseDuration(dur time.Duration) Options {
 	})
 }
 
-// WithDefaultMessageHandler set default message handler to be called
+// WithDefaultMessageHandler sets default message handler to be called
 // on message receive to all topics client has subscribed to.
 func WithDefaultMessageHandler(defaultHandler MessageHandler) Options {
 	return newFuncOption(func(o *options) {
@@ -234,18 +258,47 @@ func WithDefaultMessageHandler(defaultHandler MessageHandler) Options {
 	})
 }
 
-// WithConnectionHandler set handler function to be called when client is connected.
+// WithConnectionHandler sets handler function to be called when client is connected.
 func WithConnectionHandler(handler ConnectionHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.connectionHandler = handler
 	})
 }
 
-// WithConnectionLostHandler set handler function to be called
+// WithConnectionLostHandler sets handler function to be called
 // when connection to the client is lost.
 func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.connectionLostHandler = handler
+	})
+}
+
+// WithBatchDuration sets batch duration to group publish requestes into single group.
+func WithBatchDuration(dur time.Duration) Options {
+	return newFuncOption(func(o *options) {
+		if dur < maxBatchDuration {
+			o.batchDuration = dur
+		} else {
+			o.batchDuration = maxBatchDuration
+		}
+	})
+}
+
+// WithBatchByteThreshold sets byte threshold for publish batch.
+func WithBatchByteThreshold(size int) Options {
+	return newFuncOption(func(o *options) {
+		if size < maxPubBytes {
+			o.batchByteThreshold = size
+		}
+	})
+}
+
+// WithBatchCountThreshold sets message count threshold for publish batch.
+func WithBatchCountThreshold(count int) Options {
+	return newFuncOption(func(o *options) {
+		if count < maxPubCount {
+			o.batchCountThreshold = count
+		}
 	})
 }
 
@@ -258,9 +311,15 @@ func WithResumeSubs() Options {
 }
 
 // -------------------------------------------------------------
-type pubOptions struct {
+type pubSubOptions struct {
 	deliveryMode int32
-	ttl          string
+	delay        int32
+}
+
+// -------------------------------------------------------------
+type pubOptions struct {
+	pubSubOptions
+	ttl string
 }
 
 // PubOptions it contains configurable options for Publish
@@ -294,6 +353,14 @@ func WithPubDeliveryMode(deliveryMode int32) PubOptions {
 	})
 }
 
+// WithPubDelay allows to specify delay in milliseconds for delivery of messages
+// if DeliveryMode is set to RELIABLE or BATCH.
+func WithPubDelay(delay time.Duration) PubOptions {
+	return newFuncPubOption(func(o *pubOptions) {
+		o.delay = int32(delay.Milliseconds())
+	})
+}
+
 // WithTTL allows to specify time to live for a publish packet.
 func WithTTL(ttl string) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
@@ -303,9 +370,9 @@ func WithTTL(ttl string) PubOptions {
 
 // -------------------------------------------------------------
 type subOptions struct {
-	deliveryMode int32
-	last         string
-	callback     MessageHandler
+	pubSubOptions
+	last     string
+	callback MessageHandler
 }
 
 // SubOptions it contains configurable options for Subscribe
@@ -336,6 +403,14 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 func WithSubDeliveryMode(deliveryMode int32) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
 		o.deliveryMode = deliveryMode
+	})
+}
+
+// WithSubDelay allows to specify delay in milliseconds for delivery of messages
+// if DeliveryMode is set to RELIABLE or BATCH.
+func WithSubDelay(delay time.Duration) SubOptions {
+	return newFuncSubOption(func(o *subOptions) {
+		o.delay = int32(delay.Milliseconds())
 	})
 }
 

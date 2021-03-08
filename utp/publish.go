@@ -8,7 +8,12 @@ import (
 )
 
 type (
-	Publish     pbx.Publish
+	PublishMessage pbx.PublishMessage
+	Publish        struct {
+		MessageID    int32
+		DeliveryMode int32
+		Messages     []*PublishMessage
+	}
 	Pubnew      pbx.Pubnew
 	Pubreceive  pbx.Pubreceive
 	Pubreceipt  pbx.Pubreceipt
@@ -17,7 +22,17 @@ type (
 
 func encodePublish(p Publish) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	pub := pbx.Publish(p)
+
+	var msgs []*pbx.PublishMessage
+	for _, m := range p.Messages {
+		pubMsg := pbx.PublishMessage(*m)
+		msgs = append(msgs, &pubMsg)
+	}
+	pub := pbx.Publish{
+		MessageID:    p.MessageID,
+		DeliveryMode: p.DeliveryMode,
+		Messages:     msgs,
+	}
 	pkt, err := proto.Marshal(&pub)
 	if err != nil {
 		return msg, err
@@ -120,13 +135,19 @@ func (p *Pubcomplete) Info() Info {
 func unpackPublish(data []byte) Packet {
 	var pkt pbx.Publish
 	proto.Unmarshal(data, &pkt)
-
+	var msgs []*PublishMessage
+	for _, m := range pkt.Messages {
+		pubMsg := &PublishMessage{
+			Topic:   m.Topic,
+			Payload: m.Payload,
+			Ttl:     m.Ttl,
+		}
+		msgs = append(msgs, pubMsg)
+	}
 	return &Publish{
 		MessageID:    pkt.MessageID,
 		DeliveryMode: pkt.DeliveryMode,
-		Topic:        pkt.Topic,
-		Payload:      pkt.Payload,
-		Ttl:          pkt.Ttl,
+		Messages:     msgs,
 	}
 }
 
