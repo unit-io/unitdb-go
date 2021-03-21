@@ -87,6 +87,9 @@ func (c *client) newBatchManager(opts *batchOptions) {
 
 // close tells dispatcher to exit, and wether or not complete queued jobs.
 func (m *batchManager) close() {
+	if m == nil {
+		return
+	}
 	m.stopOnce.Do(func() {
 		// Close write queue and wait for currently running jobs to finish.
 		close(m.stop)
@@ -200,7 +203,7 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 						m.stopWg.Done()
 						return
 					}
-					pub := &utp.Publish{Messages: b.msgs}
+					pub := &utp.Publish{DeliveryMode: 2, Messages: b.msgs}
 					mID := c.nextID(b.r)
 					pub.MessageID = c.outboundID(mID)
 
@@ -208,7 +211,7 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 					c.storeOutbound(pub)
 
 					select {
-					case c.send <- &PacketAndResult{p: pub, r: b.r}:
+					case c.send <- &MessageAndResult{m: pub, r: b.r}:
 					case <-time.After(publishWaitTimeout):
 						b.r.setError(errors.New("publish timeout error occurred"))
 					}
@@ -217,7 +220,7 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 			}
 		case b := <-m.send:
 			if b != nil {
-				pub := &utp.Publish{Messages: b.msgs}
+				pub := &utp.Publish{DeliveryMode: 2, Messages: b.msgs}
 				mID := c.nextID(b.r)
 				pub.MessageID = c.outboundID(mID)
 
@@ -225,7 +228,7 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 				c.storeOutbound(pub)
 
 				select {
-				case c.send <- &PacketAndResult{p: pub, r: b.r}:
+				case c.send <- &MessageAndResult{m: pub, r: b.r}:
 				case <-time.After(publishWaitTimeout):
 					b.r.setError(errors.New("publish timeout error occurred"))
 				}

@@ -95,102 +95,77 @@ type MessageLog struct{}
 var Log MessageLog
 
 // handle which outgoing messages are stored
-func (l *MessageLog) PersistOutbound(blockID uint32, msg utp.Packet) {
-	switch msg.Info().DeliveryMode {
-	case 0:
-		switch msg.(type) {
-		case *utp.Pubcomplete:
-			// Sending pubcomp. delete matching publish
-			// from inbound
-			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
-			adp.DeleteMessage(ikey)
-		case *utp.Publish:
-			// Sending publish. store in obound
-			// until pubcomp received
-			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
-			m, err := utp.Encode(msg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(okey, m.Bytes())
+func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
+	switch outMsg.(type) {
+	case *utp.Publish, *utp.Subscribe, *utp.Unsubscribe:
+		// Received a publish. store it in ibound
+		// until ACKNOWLEDGE or COMPLETE is sent
+		okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
+		m, err := utp.Encode(outMsg)
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
-	case 1, 2:
-		switch msg.(type) {
-		case *utp.Pubreceipt:
-			// Sending pubrec. delete matching pubnew for RELIABLE delivery mode
-			// from inbound
-			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
-			adp.DeleteMessage(ikey)
-		case *utp.Publish, *utp.Pubreceive, *utp.Subscribe, *utp.Unsubscribe:
-			// Sending publish. store in obound
-			// until pubcomp received
-			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
-			m, err := utp.Encode(msg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(okey, m.Bytes())
-		default:
-			fmt.Println("Store::PersistOutbound: Invalid message type")
-		}
+		adp.PutMessage(okey, m.Bytes())
 	}
+	if outMsg.Type()==utp.FLOWCONTROL {
+		msg := *outMsg.(*utp.ControlMessage)
+		switch msg.FlowControl {
+		case utp.RECEIPT:
+			// Received a RECEIPT control message. store it in obound
+			// until COMPLETE is received.
+			okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
+			m, err := utp.Encode(outMsg)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			adp.PutMessage(okey, m.Bytes())
+	}
+}
 }
 
 // handle which incoming messages are stored
-func (l *MessageLog) PersistInbound(blockID uint32, msg utp.Packet) {
-	switch msg.Info().DeliveryMode {
-	case 0:
-		switch msg.(type) {
-		case *utp.Pubcomplete, *utp.Suback, *utp.Unsuback:
-			// Received a pubcomp. delete matching publish for EXPRESS delivery mode
-			// or pubrecv for RELIABLE delivery mode from obound
-			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
-			adp.DeleteMessage(okey)
-		case *utp.Publish:
-			// Received a publish. store it in ibound
-			// until pubcomp received
-			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
-			m, err := utp.Encode(msg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(ikey, m.Bytes())
-		case *utp.Pingresp, *utp.Connack:
-		default:
-			fmt.Println("Store::PersistInbound: Invalid message type")
+func (l *MessageLog) PersistInbound(blockID uint32, inMsg utp.Message) {
+	switch inMsg.(type) {
+	case *utp.Publish:
+		// Received a publish. store it in ibound
+		// until COMPLETE sent
+		ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
+		m, err := utp.Encode(inMsg)
+		if err != nil {
+			fmt.Println(err)
+			return
 		}
-	case 1, 2:
-		switch msg.(type) {
-		case *utp.Pubreceipt:
-			// Received a pubrec. delete matching publish
-			// from obound
-			okey := uint64(msg.Info().MessageID)<<32 + uint64(blockID)
+		adp.PutMessage(ikey, m.Bytes())
+	}
+	if inMsg.Type()==utp.FLOWCONTROL {
+		msg := *inMsg.(*utp.ControlMessage)
+		switch msg.FlowControl {
+		case utp.ACKNOWLEDGE, utp.COMPLETE:
+			// Sending ACKNOWLEDGE, delete matching PUBLISH for EXPRESS delivery mode
+			// or sending COMPLETE, delete matching RECEIVE for RELIABLE delivery mode from ibound
+			okey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
 			adp.DeleteMessage(okey)
-		case *utp.Pubnew:
-			// Received a publish. store it in ibound
-			// until pubrec received
-			ikey := uint64(blockID)<<32 + uint64(msg.Info().MessageID)
-			m, err := utp.Encode(msg)
+		case utp.NOTIFY:
+			// Sending RECEIPT. store in obound
+			// until COMPLETE received
+			ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
+			m, err := utp.Encode(inMsg)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
 			adp.PutMessage(ikey, m.Bytes())
-		case *utp.Publish:
-		default:
-			fmt.Println("Store::PersistInbound: Invalid message type")
 		}
 	}
 }
 
 // Get performs a query and attempts to fetch message for the given key
-func (l *MessageLog) Get(key uint64) utp.Packet {
+func (l *MessageLog) Get(key uint64) utp.Message {
 	if raw, err := adp.GetMessage(key); raw != nil && err == nil {
 		r := bytes.NewReader(raw)
-		if msg, err := utp.ReadPacket(r); err == nil {
+		if msg, err := utp.Read(r); err == nil {
 			return msg
 		}
 	}

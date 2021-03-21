@@ -37,15 +37,15 @@ func main() {
 		log.Fatalf("err: %s", err)
 	}
 
-	r := client.Subscribe([]byte("teams.alpha.user1"), unitdb.WithLast("1m"), unitdb.WithSubDeliveryMode(2), unitdb.WithSubDelay(3*time.Second))
+	r := client.Subscribe("teams.alpha.user1", unitdb.WithLast("1m"), unitdb.WithSubDeliveryMode(0))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 2; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		r := client.Publish([]byte("teams.alpha.user1"), []byte(msg), unitdb.WithTTL("1m"), unitdb.WithPubDeliveryMode(2), unitdb.WithPubDelay(3*time.Second))
+		r := client.Publish("teams.alpha.user1", []byte(msg), unitdb.WithTTL("1m"), unitdb.WithPubDeliveryMode(0))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -53,7 +53,7 @@ func main() {
 
 	wait := time.NewTicker(5 * time.Second)
 	<-wait.C
-	r = client.Unsubscribe([]byte("teams.alpha.user1"))
+	r = client.Unsubscribe("teams.alpha.user1")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)

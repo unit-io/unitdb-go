@@ -33,7 +33,7 @@ func main() {
 	password := flag.String("password", "", "The password (optional)")
 	user := flag.String("user", "", "The User (optional)")
 	id := flag.String("id", "UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ", "The ClientID (optional)")
-	num := flag.Int("num", 1, "The number of messages to publish or subscribe (default 1)")
+	num := flag.Int("number", 1, "The number of messages to publish or subscribe (default 1)")
 	payload := flag.String("message", "Hello team alpha channel1!", "The message text to publish (default empty)")
 	action := flag.String("action", "sub", "Action publish or subscribe (required)")
 	flag.Parse()
@@ -65,7 +65,7 @@ func main() {
 			*server,
 			*id,
 			// unitdb.WithInsecure(),
-			unitdb.WithUserNamePassword([]byte(*user), []byte(*password)),
+			unitdb.WithUserNamePassword(*user, []byte(*password)),
 			unitdb.WithCleanSession(),
 			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
 				if err != nil {
@@ -74,7 +74,7 @@ func main() {
 				close(recv)
 			}),
 			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
-				recv <- [2][]byte{msg.Topic(), msg.Payload()}
+				recv <- [2][]byte{[]byte(msg.Topic()), msg.Payload()}
 			}),
 		)
 		if err != nil {
@@ -97,7 +97,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Publish([]byte("unitdb/keygen"), keyReq)
+		r := client.Publish("unitdb/keygen", keyReq)
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -120,7 +120,7 @@ func main() {
 			*id,
 			// unitdb.WithInsecure(),
 			// unitdb.WithSessionKey(2339641921),
-			unitdb.WithUserNamePassword([]byte(*user), []byte(*password)),
+			unitdb.WithUserNamePassword(*user, []byte(*password)),
 			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
@@ -138,7 +138,7 @@ func main() {
 		}
 		fmt.Println("Publisher Started")
 		for i := 0; i < *num; i++ {
-			r := client.Publish([]byte(*topic), []byte(*payload), unitdb.WithPubDeliveryMode(1))
+			r := client.Publish(*topic, []byte(*payload), unitdb.WithPubDeliveryMode(1))
 			if _, err := r.Get(ctx, 1*time.Second); err != nil {
 				log.Fatalf("err: %s", err)
 			}
@@ -155,8 +155,10 @@ func main() {
 			*id,
 			// unitdb.WithInsecure(),
 			unitdb.WithSessionKey(2339641922),
-			unitdb.WithUserNamePassword([]byte(*user), []byte(*password)),
+			unitdb.WithUserNamePassword(*user, []byte(*password)),
 			// unitdb.WithCleanSession(),
+			unitdb.WithKeepAlive(2*time.Second),
+			unitdb.WithPingTimeout(1*time.Second),
 			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
@@ -164,7 +166,7 @@ func main() {
 				close(recv)
 			}),
 			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
-				recv <- [2][]byte{msg.Topic(), msg.Payload()}
+				recv <- [2][]byte{[]byte(msg.Topic()), msg.Payload()}
 			}),
 			unitdb.WithBatchDuration(10*time.Second),
 		)
@@ -176,7 +178,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe([]byte(*topic), unitdb.WithSubDeliveryMode(1), unitdb.WithSubDelay(1*time.Second))
+		r := client.Subscribe(*topic, unitdb.WithSubDeliveryMode(1)/*, unitdb.WithSubDelay(1*time.Second)*/)
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)

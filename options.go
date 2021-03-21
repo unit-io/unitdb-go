@@ -31,10 +31,10 @@ type ConnectionLostHandler func(Client, error)
 
 type options struct {
 	servers                 []*url.URL
-	clientID                []byte
+	clientID                string
 	sessionKey              uint32
 	insecureFlag            bool
-	username                []byte
+	username                string
 	password                []byte
 	cleanSession            bool
 	tLSConfig               *tls.Config
@@ -70,7 +70,7 @@ func (o *options) addServer(target string) {
 	o.servers = append(o.servers, uri)
 }
 
-func (o *options) setClientID(clientID []byte) {
+func (o *options) setClientID(clientID string) {
 	o.clientID = clientID
 }
 
@@ -102,12 +102,12 @@ func newFuncOption(f func(*options)) *fOption {
 func WithDefaultOptions() Options {
 	return newFuncOption(func(o *options) {
 		o.servers = nil
-		o.clientID = nil
+		o.clientID = ""
 		o.sessionKey = 0
 		o.insecureFlag = false
-		o.username = nil
+		o.username = ""
 		o.password = nil
-		o.cleanSession = true
+		o.cleanSession = false
 		o.keepAlive = 30
 		o.pingTimeout = 30 * time.Second
 		o.connectTimeout = 30 * time.Second
@@ -146,7 +146,7 @@ func AddServer(target string) Options {
 }
 
 // WithClientID  returns an Option which makes client connection and set ClientID
-func WithClientID(clientID []byte) Options {
+func WithClientID(clientID string) Options {
 	return newFuncOption(func(o *options) {
 		o.clientID = clientID
 	})
@@ -169,7 +169,7 @@ func WithInsecure() Options {
 }
 
 // WithUserName returns an Option which makes client connection and pass UserName
-func WithUserNamePassword(userName, password []byte) Options {
+func WithUserNamePassword(userName string, password []byte) Options {
 	return newFuncOption(func(o *options) {
 		o.username = userName
 		o.password = password

@@ -14,13 +14,16 @@ import (
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
-// cm - Connect Packet
-func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32) {
+// cm - Connect Message
+func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32, err error) {
 	m, err := utp.Encode(cm)
 	if err != nil {
 		fmt.Println(err)
+		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
-	conn.Write(m.Bytes())
+	if _, err := conn.Write(m.Bytes());err!=nil{
+		return utp.ErrRefusedServerUnavailable, 0, 0, err
+	}
 	return verifyCONNACK(conn)
 }
 
@@ -28,27 +31,27 @@ func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32) 
 // when the connection is first started.
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
-func verifyCONNACK(conn net.Conn) (int32, int32, int32) {
-	ca, err := utp.ReadPacket(conn)
+func verifyCONNACK(conn net.Conn) (int32, int32, int32, error) {
+	ca, err := utp.Read(conn)
 	if err != nil {
-		return utp.ErrNetworkError, 0, 0
+		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
 	if ca == nil {
-		return utp.ErrNetworkError, 0, 0
+		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("nil Connect Acknowledge Message")
 	}
 
-	msg, ok := ca.(*utp.Connack)
+	msg, ok := ca.(*utp.ConnectAcknowledge)
 	if !ok {
-		return utp.ErrNetworkError, 0, 0
+		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("First message must be Connect Acknowledge Message")
 	}
 
-	return msg.ReturnCode, msg.Epoch, msg.ConnID
+	return msg.ReturnCode, msg.Epoch, msg.ConnID, nil
 }
 
 // Handle handles incoming messages
 func (c *client) readLoop(ctx context.Context) error {
 	defer func() {
-		defer log.Println("conn.Handler: closing...")
+		defer log.Println("conn.readLoop: closing...")
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
@@ -62,10 +65,9 @@ func (c *client) readLoop(ctx context.Context) error {
 		case <-c.closeC:
 			return nil
 		default:
-			// Decode an incoming packet
-			msg, err := utp.ReadPacket(reader)
+			// Unpack an incoming Message
+			msg, err := utp.Read(reader)
 			if err != nil {
-				fmt.Println("conn::readLoop: read packet error ", err)
 				return err
 			}
 
@@ -74,7 +76,6 @@ func (c *client) readLoop(ctx context.Context) error {
 
 			// Message handler
 			if err := c.handler(msg); err != nil {
-				fmt.Println("conn::readLoop: message handler error ", err)
 				return err
 			}
 		}
@@ -82,40 +83,40 @@ func (c *client) readLoop(ctx context.Context) error {
 }
 
 // handle handles inbound messages.
-func (c *client) handler(msg utp.Packet) error {
+func (c *client) handler(inMsg utp.Message) error {
 	c.updateLastAction()
 
-	switch m := msg.(type) {
-	case *utp.Pingresp:
-		c.updateLastTouched()
-	case *utp.Suback:
-		mId := c.inboundID(m.MessageID)
-		c.getType(mId).flowComplete()
-		c.freeID(mId)
-	case *utp.Unsuback:
-		mId := c.inboundID(m.MessageID)
-		c.getType(mId).flowComplete()
-		c.freeID(mId)
-	case *utp.Publish:
-		c.pub <- msg.(*utp.Publish)
-	case *utp.Pubnew:
-		p := utp.Packet(&utp.Pubreceive{MessageID: m.MessageID})
-		// persist outbound
-		c.storeOutbound(p)
-		c.send <- &PacketAndResult{p: p}
-	case *utp.Pubreceipt:
-		p := utp.Packet(&utp.Pubcomplete{MessageID: m.MessageID})
-		// persist outbound
-		c.storeOutbound(p)
-		c.send <- &PacketAndResult{p: p}
-	case *utp.Pubcomplete:
+	switch inMsg.Type() {
+	case utp.FLOWCONTROL:
+		m := *inMsg.(*utp.ControlMessage)
+		switch m.FlowControl{
+		case utp.ACKNOWLEDGE:
+			switch m.MessageType {
+			case utp.PINGREQ:
+				c.updateLastTouched()
+			case utp.SUBSCRIBE, utp.UNSUBSCRIBE, utp.PUBLISH:
+				mId := c.inboundID(m.MessageID)
+				c.getType(mId).flowComplete()
+				c.freeID(mId)
+			}
+		case utp.NOTIFY:
+			recv := &utp.ControlMessage{
+				MessageID: m.MessageID,
+				MessageType: utp.PUBLISH,
+				FlowControl: utp.RECEIVE,
+			}
+		c.send <- &MessageAndResult{m: recv}
+	case utp.COMPLETE:
 		mId := c.inboundID(m.MessageID)
 		r := c.getType(mId)
 		if r != nil {
 			r.flowComplete()
 			c.freeID(mId)
 		}
-	case *utp.Disconnect:
+	}
+	case utp.PUBLISH:
+		c.pub <- inMsg.(*utp.Publish)
+	case utp.DISCONNECT:
 		go c.serverDisconnect(errors.New("server initiated disconnect")) // no harm in calling this if the connection is already down (better than stopping!)
 	}
 
@@ -129,18 +130,18 @@ func (c *client) writeLoop(ctx context.Context) {
 			return
 		case <-c.closeC:
 			return
-		case msg, ok := <-c.send:
+		case outMsg, ok := <-c.send:
 			if !ok {
 				// Channel closed.
 				return
 			}
-			switch m := msg.p.(type) {
+			switch msg := outMsg.m.(type) {
 			case *utp.Disconnect:
-				msg.r.(*DisconnectResult).flowComplete()
-				mId := c.inboundID(m.MessageID)
+				outMsg.r.(*DisconnectResult).flowComplete()
+				mId := c.inboundID(msg.MessageID)
 				c.freeID(mId)
 			}
-			m, err := utp.Encode(msg.p)
+			m, err := utp.Encode(outMsg.m)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -203,7 +204,6 @@ func (c *client) keepalive(ctx context.Context) {
 			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int64(time.Second)))
 			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
-			// if lastAction.After(live) && lastTouched.Before(timeout) {
 			if lastAction.After(live) || lastTouched.After(live) {
 				ping := &utp.Pingreq{}
 				m, err := utp.Encode(ping)
@@ -222,22 +222,30 @@ func (c *client) keepalive(ctx context.Context) {
 	}
 }
 
-// ack acknowledges a packet
-func ack(c *client, pkt *utp.Publish) func() {
+// ack acknowledges a Message
+func ack(c *client, pub *utp.Publish) func() {
 	return func() {
-		switch pkt.Info().DeliveryMode {
+		switch pub.Info().DeliveryMode {
 		// DeliveryMode RELIABLE or BATCH
 		case 1, 2:
-			p := utp.Packet(&utp.Pubreceipt{MessageID: pkt.MessageID})
+			rec := &utp.ControlMessage{
+				MessageID: pub.MessageID,
+				MessageType: utp.PUBLISH,
+				FlowControl: utp.RECEIPT,
+			}
 			// persist outbound
-			c.storeOutbound(p)
-			c.send <- &PacketAndResult{p: p}
+			c.storeOutbound(rec)
+			c.send <- &MessageAndResult{m: rec}
 		// DeliveryMode Express
 		case 0:
-			p := utp.Packet(&utp.Pubcomplete{MessageID: pkt.MessageID})
+			ack := &utp.ControlMessage{
+				MessageID: pub.MessageID,
+				MessageType: utp.PUBLISH,
+				FlowControl: utp.ACKNOWLEDGE,
+			}
 			// persist outbound
-			c.storeOutbound(p)
-			c.send <- &PacketAndResult{p: p}
+			c.storeOutbound(ack)
+			c.send <- &MessageAndResult{m: ack}
 		}
 	}
 }

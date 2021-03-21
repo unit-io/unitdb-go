@@ -10,6 +10,7 @@ type MID uint32
 type messageIds struct {
 	sync.RWMutex
 	id    MID
+	resumedIds map[MID]struct{}
 	index map[MID]Result // map[MID]Result
 }
 
@@ -25,10 +26,19 @@ func (mids *messageIds) freeID(id MID) {
 	delete(mids.index, id)
 }
 
+func (mids *messageIds) resumeID(id MID) {
+	mids.Lock()
+	defer mids.Unlock()
+	mids.resumedIds[id] = struct{}{}
+}
+
 func (mids *messageIds) nextID(r Result) MID {
 	mids.Lock()
 	defer mids.Unlock()
 	mids.id--
+	if _,ok:=mids.resumedIds[mids.id];ok{
+		mids.nextID(r)
+	}
 	mids.index[mids.id] = r
 	return mids.id
 }

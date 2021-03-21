@@ -8,11 +8,11 @@ import (
 	"github.com/unit-io/unitdb-go/utp"
 )
 
-// PacketAndResult is a type that contains both a Packet and a Result.
+// MessageAndResult is a type that contains both a Message and a Result.
 // This type is passed via channels between client connection interface and
 // goroutines responsible for sending and receiving messages from server
-type PacketAndResult struct {
-	p utp.Packet
+type MessageAndResult struct {
+	m utp.Message
 	r Result
 }
 
@@ -104,7 +104,7 @@ type PublishResult struct {
 }
 
 // MessageID returns the message ID that was assigned to the
-// Publish packet when it was sent to the server
+// Publish Message when it was sent to the server
 func (r *PublishResult) MessageID() int32 {
 	return r.messageID
 }
@@ -113,7 +113,7 @@ func (r *PublishResult) MessageID() int32 {
 // for the delivery mode's pairs in unsubscribe and subscribe
 type Subscription struct {
 	DeliveryMode int32
-	Topic        []byte
+	Topic        string
 }
 
 // SubscribeResult is an extension of result containing the extra fields
@@ -155,7 +155,7 @@ type PutResult struct {
 }
 
 // MessageID returns the message ID that was assigned to the
-// Publish packet when it was sent to the server
+// Publish Message when it was sent to the server
 func (r *PutResult) MessageID() int32 {
 	return r.messageID
 }

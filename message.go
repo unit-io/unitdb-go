@@ -11,7 +11,7 @@ import (
 // these are received messages that are passed, not internal
 // messages
 type Message interface {
-	Topic() []byte
+	Topic() string
 	MessageID() int32
 	Payload() []byte
 	Ack()
@@ -21,7 +21,7 @@ type message struct {
 	duplicate    bool
 	deliveryMode byte
 	retained     bool
-	topic        []byte
+	topic        string
 	messageID    int32
 	payload      []byte
 	once         sync.Once
@@ -40,7 +40,7 @@ func (m *message) Retained() bool {
 	return m.retained
 }
 
-func (m *message) Topic() []byte {
+func (m *message) Topic() string {
 	return m.topic
 }
 
@@ -80,13 +80,13 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
 	username := opts.username
 	password := opts.password
 	if server.User != nil {
-		username = []byte(server.User.Username())
+		username = server.User.Username()
 		if pwd, ok := server.User.Password(); ok {
 			password = []byte(pwd)
 		}
 	}
 
-	if username != nil {
+	if username != "" {
 		m.Username = username
 		//mustn't have password without user as well
 		if password != nil {

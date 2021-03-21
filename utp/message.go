@@ -9,43 +9,42 @@ import (
 	pbx "github.com/unit-io/unitdb/server/proto"
 )
 
+// MessageType represents a Message type
+type MessageType uint8
+
 const (
-	CONNECT = uint8(iota + 1)
-	CONNACK
+	// Message
+	CONNECT MessageType = iota + 1
 	PUBLISH
-	PUBNEW
-	PUBRECEIVE
-	PUBRECEIPT
-	PUBCOMPLETE
 	SUBSCRIBE
-	SUBACK
 	UNSUBSCRIBE
-	UNSUBACK
 	PINGREQ
-	PINGRESP
 	DISCONNECT
+	FLOWCONTROL
 )
 
-//Below are the const definitions for error codes returned by
-//Connect()
+// Below are the const definitions for error codes returned by
+// Connect()
 const (
-	Accepted                        = 0x00
-	ErrRefusedBadProtocolVersion    = 0x01
-	ErrRefusedIDRejected            = 0x02
-	ErrRefusedServerUnavailable     = 0x03
-	ErrRefusedBadUsernameOrPassword = 0x04
-	ErrRefusedNotAuthorised         = 0x05
-	ErrNetworkError                 = 0xFE
-	ErrProtocolViolation            = 0xFF
+	Accepted                      = 0x00
+	ErrRefusedBadProtocolVersion  = 0x01
+	ErrRefusedIDRejected          = 0x02
+	ErrRefusedbADID               = 0x03
+	ErrRefusedServerUnavailable   = 0x04
+	ErrNotAuthorised              = 0x05
+	ErrBadRequest                 = 0x06
 )
 
-// Packet is the interface all our packets in the line protocol will be implementing
-type Packet interface {
+func (t MessageType) Value() uint8 {
+	return uint8(t)
+}
+
+// Message is the interface all Messages
+type Message interface {
 	Type() MessageType
 	Info() Info
 }
 
-type MessageType pbx.MessageType
 type FixedHeader pbx.FixedHeader
 
 // Info returns Qos and MessageID by the Info() function called on the Packet
@@ -54,72 +53,57 @@ type Info struct {
 	MessageID    int32
 }
 
-// ReadPacket unpacks the packet from the provided reader.
-func ReadPacket(r io.Reader) (Packet, error) {
+// Read unpacks the packet from the provided reader.
+func Read(r io.Reader) (Message, error) {
 	var fh FixedHeader
 	fh.unpack(r)
 
 	// Check for empty packets
 	switch uint8(fh.MessageType) {
-	case PINGREQ:
-		return &Pingreq{}, nil
-	case PINGRESP:
-		return &Pingresp{}, nil
-	case DISCONNECT:
+	case DISCONNECT.Value():
 		return &Disconnect{}, nil
 	}
 
-	msg := make([]byte, fh.MessageLength)
-	_, err := io.ReadFull(r, msg)
+	rawMsg := make([]byte, fh.MessageLength)
+	_, err := io.ReadFull(r, rawMsg)
 	if err != nil {
 		return nil, err
 	}
 
 	// unpack the body
-	var pkt Packet
+	var msg Message
+	if uint8(fh.FlowControl) != NONE.Value() {
+		return unpackControlMessage(fh, rawMsg), nil
+	}
 	switch uint8(fh.MessageType) {
-	case CONNACK:
-		pkt = unpackConnack(msg)
-	case PUBLISH:
-		pkt = unpackPublish(msg)
-	case PUBNEW:
-		pkt = unpackPubnew(msg)
-	case PUBRECEIPT:
-		pkt = unpackPubreceipt(msg)
-	case PUBCOMPLETE:
-		pkt = unpackPubcomplete(msg)
-	case SUBACK:
-		pkt = unpackSuback(msg)
-	case UNSUBACK:
-		pkt = unpackUnsuback(msg)
+	case PUBLISH.Value():
+		msg = unpackPublish(rawMsg)
 	default:
-		return nil, fmt.Errorf("Invalid zero-length packet with type %d", fh.MessageType)
+		return nil, fmt.Errorf("message::Read: Invalid zero-length packet type %d", fh.MessageType)
 	}
 
-	return pkt, nil
+	return msg, nil
 }
 
 // Encode encodes the message into binary data
-func Encode(pkt Packet) (bytes.Buffer, error) {
-	switch uint8(pkt.Type()) {
+func Encode(msg Message) (bytes.Buffer, error) {
+	switch msg.Type() {
 	case PINGREQ:
-		return encodePingreq(*pkt.(*Pingreq))
+		return encodePingreq(*msg.(*Pingreq))
 	case CONNECT:
-		return encodeConnect(*pkt.(*Connect))
+		return encodeConnect(*msg.(*Connect))
 	case DISCONNECT:
-		return encodeDisconnect(*pkt.(*Disconnect))
+		return encodeDisconnect(*msg.(*Disconnect))
 	case SUBSCRIBE:
-		return encodeSubscribe(*pkt.(*Subscribe))
+		return encodeSubscribe(*msg.(*Subscribe))
 	case UNSUBSCRIBE:
-		return encodeUnsubscribe(*pkt.(*Unsubscribe))
+		return encodeUnsubscribe(*msg.(*Unsubscribe))
 	case PUBLISH:
-		return encodePublish(*pkt.(*Publish))
-	case PUBRECEIVE:
-		return encodePubreceive(*pkt.(*Pubreceive))
-	case PUBRECEIPT:
-		return encodePubreceipt(*pkt.(*Pubreceipt))
-	case PUBCOMPLETE:
-		return encodePubcomplete(*pkt.(*Pubcomplete))
+		return encodePublish(*msg.(*Publish))
+	case FLOWCONTROL:
+		return encodeControlMessage(*msg.(*ControlMessage))
+	default:
+		return bytes.Buffer{}, fmt.Errorf("message::Encode: Invalid zero-length packet type %d", msg.Type())
 	}
 	return bytes.Buffer{}, nil
 }

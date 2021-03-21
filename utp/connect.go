@@ -8,122 +8,87 @@ import (
 )
 
 type (
-	Connect    pbx.Conn
-	Connack    pbx.Connack
-	Pingreq    pbx.Pingreq
-	Pingresp   pbx.Pingresp
+	Connect    pbx.Connect
+	ConnectAcknowledge    pbx.ConnectAcknowledge
+	Pingreq    pbx.PingRequest
 	Disconnect pbx.Disconnect
 )
 
 func encodeConnect(c Connect) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	conn := pbx.Conn(c)
-	pkt, err := proto.Marshal(&conn)
+	conn := pbx.Connect(c)
+	rawMsg, err := proto.Marshal(&conn)
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_CONNECT, MessageLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_CONNECT, MessageLength: int32(len(rawMsg))}
 	msg = fh.pack()
-	_, err = msg.Write(pkt)
+	_, err = msg.Write(rawMsg)
 	return msg, err
 }
 
-// Type returns the packet type.
+// Type returns the Message type.
 func (c *Connect) Type() MessageType {
-	return MessageType(pbx.MessageType_CONNECT)
+	return CONNECT
 }
 
-// Info returns DeliveryMode and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this Message.
 func (c *Connect) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
 }
 
-// Type returns the packet type.
-func (c *Connack) Type() MessageType {
-	return MessageType(pbx.MessageType_CONNACK)
+// Type returns the Message type.
+func (c *ConnectAcknowledge) Type() MessageType {
+	return FLOWCONTROL
 }
 
-// Info returns DeliveryMode and MessageID of this packet.
-func (c *Connack) Info() Info {
+// Info returns DeliveryMode and MessageID of this Message.
+func (c *ConnectAcknowledge) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
 }
 
 func encodePingreq(p Pingreq) (bytes.Buffer, error) {
 	var msg bytes.Buffer
-	pingreq := pbx.Pingreq(p)
-	pkt, err := proto.Marshal(&pingreq)
+	pingreq := pbx.PingRequest(p)
+	rawMsg, err := proto.Marshal(&pingreq)
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PINGREQ, MessageLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_PINGREQ, MessageLength: int32(len(rawMsg))}
 	msg = fh.pack()
-	_, err = msg.Write(pkt)
+	_, err = msg.Write(rawMsg)
 	return msg, err
 }
 
-// Type returns the packet type.
+// Type returns the Message type.
 func (p *Pingreq) Type() MessageType {
-	return MessageType(pbx.MessageType_PINGREQ)
+	return PINGREQ
 }
 
-// Info returns DeliveryMode and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this Message.
 func (p *Pingreq) Info() Info {
-	return Info{DeliveryMode: 0, MessageID: 0}
-}
-
-func encodePingresp(p Pingresp) (bytes.Buffer, error) {
-	var msg bytes.Buffer
-	pingresp := pbx.Pingresp(p)
-	pkt, err := proto.Marshal(&pingresp)
-	if err != nil {
-		return msg, err
-	}
-	fh := FixedHeader{MessageType: pbx.MessageType_PINGRESP, MessageLength: int32(len(pkt))}
-	msg = fh.pack()
-	_, err = msg.Write(pkt)
-	return msg, err
-}
-
-// Type returns the packet type.
-func (p *Pingresp) Type() MessageType {
-	return MessageType(pbx.MessageType_PINGRESP)
-}
-
-// Info returns DeliveryMode and MessageID of this packet.
-func (p *Pingresp) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
 }
 
 func encodeDisconnect(d Disconnect) (bytes.Buffer, error) {
 	var msg bytes.Buffer
 	disc := pbx.Disconnect(d)
-	pkt, err := proto.Marshal(&disc)
+	rawMsg, err := proto.Marshal(&disc)
 	if err != nil {
 		return msg, err
 	}
-	fh := FixedHeader{MessageType: pbx.MessageType_DISCONNECT, MessageLength: int32(len(pkt))}
+	fh := FixedHeader{MessageType: pbx.MessageType_DISCONNECT, MessageLength: int32(len(rawMsg))}
 	msg = fh.pack()
-	_, err = msg.Write(pkt)
+	_, err = msg.Write(rawMsg)
 	return msg, err
 }
 
-// Type returns the packet type.
+// Type returns the Message type.
 func (d *Disconnect) Type() MessageType {
-	return MessageType(pbx.MessageType_DISCONNECT)
+	return DISCONNECT
 }
 
-// Info returns DeliveryMode and MessageID of this packet.
+// Info returns DeliveryMode and MessageID of this Message.
 func (d *Disconnect) Info() Info {
 	return Info{DeliveryMode: 0, MessageID: 0}
-}
-
-func unpackConnack(data []byte) Packet {
-	var pkt pbx.Connack
-	proto.Unmarshal(data, &pkt)
-
-	return &Connack{
-		ReturnCode: pkt.ReturnCode,
-		Epoch:      pkt.Epoch,
-		ConnID:     pkt.ConnID,
-	}
 }
