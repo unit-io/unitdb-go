@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/unit-io/unitdb-go/utp"
+	"github.com/unit-io/unitdb-go/internal/utp"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
@@ -21,7 +21,7 @@ func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32, 
 		fmt.Println(err)
 		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
-	if _, err := conn.Write(m.Bytes());err!=nil{
+	if _, err := conn.Write(m.Bytes()); err != nil {
 		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
 	return verifyCONNACK(conn)
@@ -42,7 +42,7 @@ func verifyCONNACK(conn net.Conn) (int32, int32, int32, error) {
 
 	msg, ok := ca.(*utp.ConnectAcknowledge)
 	if !ok {
-		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("First message must be Connect Acknowledge Message")
+		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("first message must be connect acknowledge message")
 	}
 
 	return msg.ReturnCode, msg.Epoch, msg.ConnID, nil
@@ -51,7 +51,8 @@ func verifyCONNACK(conn net.Conn) (int32, int32, int32, error) {
 // Handle handles incoming messages
 func (c *client) readLoop(ctx context.Context) error {
 	defer func() {
-		defer log.Println("conn.readLoop: closing...")
+		log.Println("conn.readLoop: closing...")
+		// c.closeW.Done()
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
@@ -89,31 +90,31 @@ func (c *client) handler(inMsg utp.Message) error {
 	switch inMsg.Type() {
 	case utp.FLOWCONTROL:
 		m := *inMsg.(*utp.ControlMessage)
-		switch m.FlowControl{
+		switch m.FlowControl {
 		case utp.ACKNOWLEDGE:
 			switch m.MessageType {
 			case utp.PINGREQ:
 				c.updateLastTouched()
-			case utp.SUBSCRIBE, utp.UNSUBSCRIBE, utp.PUBLISH:
+			case utp.SUBSCRIBE, utp.UNSUBSCRIBE, utp.RELAY, utp.PUBLISH:
 				mId := c.inboundID(m.MessageID)
 				c.getType(mId).flowComplete()
 				c.freeID(mId)
 			}
 		case utp.NOTIFY:
 			recv := &utp.ControlMessage{
-				MessageID: m.MessageID,
+				MessageID:   m.MessageID,
 				MessageType: utp.PUBLISH,
 				FlowControl: utp.RECEIVE,
 			}
-		c.send <- &MessageAndResult{m: recv}
-	case utp.COMPLETE:
-		mId := c.inboundID(m.MessageID)
-		r := c.getType(mId)
-		if r != nil {
-			r.flowComplete()
-			c.freeID(mId)
+			c.send <- &MessageAndResult{m: recv}
+		case utp.COMPLETE:
+			mId := c.inboundID(m.MessageID)
+			r := c.getType(mId)
+			if r != nil {
+				r.flowComplete()
+				c.freeID(mId)
+			}
 		}
-	}
 	case utp.PUBLISH:
 		c.pub <- inMsg.(*utp.Publish)
 	case utp.DISCONNECT:
@@ -124,6 +125,7 @@ func (c *client) handler(inMsg utp.Message) error {
 }
 
 func (c *client) writeLoop(ctx context.Context) {
+	// defer c.closeW.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -144,7 +146,7 @@ func (c *client) writeLoop(ctx context.Context) {
 			m, err := utp.Encode(outMsg.m)
 			if err != nil {
 				fmt.Println(err)
-				return
+				// return
 			}
 			c.conn.Write(m.Bytes())
 		}
@@ -152,6 +154,7 @@ func (c *client) writeLoop(ctx context.Context) {
 }
 
 func (c *client) dispatcher(ctx context.Context) {
+	// defer c.closeW.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,7 +193,9 @@ func (c *client) keepalive(ctx context.Context) {
 	}
 
 	pingTicker := time.NewTicker(time.Duration(pingInterval * int64(time.Second)))
-	defer pingTicker.Stop()
+	defer func() {
+		pingTicker.Stop()
+	}()
 
 	for {
 		select {
@@ -229,7 +234,7 @@ func ack(c *client, pub *utp.Publish) func() {
 		// DeliveryMode RELIABLE or BATCH
 		case 1, 2:
 			rec := &utp.ControlMessage{
-				MessageID: pub.MessageID,
+				MessageID:   pub.MessageID,
 				MessageType: utp.PUBLISH,
 				FlowControl: utp.RECEIPT,
 			}
@@ -239,7 +244,7 @@ func ack(c *client, pub *utp.Publish) func() {
 		// DeliveryMode Express
 		case 0:
 			ack := &utp.ControlMessage{
-				MessageID: pub.MessageID,
+				MessageID:   pub.MessageID,
 				MessageType: utp.PUBLISH,
 				FlowControl: utp.ACKNOWLEDGE,
 			}

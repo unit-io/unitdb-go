@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/unit-io/unitdb-go/store"
-	"github.com/unit-io/unitdb-go/utp"
+	"github.com/unit-io/unitdb-go/internal/store"
+	"github.com/unit-io/unitdb-go/internal/utp"
 	"github.com/unit-io/unitdb/server/common"
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"google.golang.org/grpc"
 
 	// Database store
-	_ "github.com/unit-io/unitdb-go/db/unitdb"
+	_ "github.com/unit-io/unitdb-go/internal/db/unitdb"
 )
 
 type Client interface {
@@ -39,6 +39,9 @@ type Client interface {
 	Publish(topic string, payload []byte, pubOpts ...PubOptions) Result
 	// Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 	// a message is published on the topic provided, or nil for the default handler.
+	// Relay sends a relay request to server. Provide a MessageHandler to be executed when
+	// a message is published on the topic provided, or nil for the default handler.
+	Relay(topic string, relOpts ...RelOptions) Result
 	Subscribe(topic string, subOpts ...SubOptions) Result
 	// Unsubscribe will end the subscription from each of the topics provided.
 	// Messages published to those topics from other clients will no longer be
@@ -46,16 +49,14 @@ type Client interface {
 	Unsubscribe(topics ...string) Result
 }
 type client struct {
-	mu         sync.Mutex // mutex for the connection
 	opts       *options
 	context    context.Context    // context for the client
 	cancel     context.CancelFunc // cancellation function
 	messageIds                    // local identifier of messages
 	connID     int32              // The unique id of the connection.
-	sessID uint32
-	epoch    uint32             // The session ID of the connection.
-	conn       net.Conn           // the network connection
-	stream     grpc.Stream
+	sessID     uint32
+	epoch      uint32   // The session ID of the connection.
+	conn       net.Conn // the network connection
 	send       chan *MessageAndResult
 	recv       chan utp.Message
 	pub        chan *utp.Publish
@@ -180,18 +181,19 @@ func (c *client) ConnectContext(ctx context.Context) error {
 		c.updateLastTouched()
 		go c.keepalive(ctx)
 	}
+	// c.closeW.Add(3)
 	go c.readLoop(ctx)   // process incoming messages
 	go c.writeLoop(ctx)  // send messages to servers
 	go c.dispatcher(ctx) // dispatch messages to client
 
-		// Take care of any messages in the store
-		var sessKey uint32
-		if c.opts.sessionKey != 0 {
-			sessKey = c.opts.sessionKey
-		} else {
-			sessKey = c.epoch
-		}
-	
+	// Take care of any messages in the store
+	var sessKey uint32
+	if c.opts.sessionKey != 0 {
+		sessKey = c.opts.sessionKey
+	} else {
+		sessKey = c.epoch
+	}
+
 	sessID := c.connID
 	if rawSess, err := store.Session.Get(uint64(sessKey)); err == nil {
 		sessID := binary.LittleEndian.Uint32(rawSess[:4])
@@ -275,7 +277,7 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 		// Disconnect() called but not connected
 		return nil
 	}
-	
+
 	defer c.close()
 	m := &utp.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
@@ -354,6 +356,42 @@ func (c *client) Publish(topic string, payload []byte, pubOpts ...PubOptions) Re
 	return r
 }
 
+// Relay send a new relay request. Provide a MessageHandler to be executed when
+// a message is published on the topic provided.
+func (c *client) Relay(topic string, relOpts ...RelOptions) Result {
+	r := &RelayResult{result: result{complete: make(chan struct{})}}
+	if err := c.ok(); err != nil {
+		r.setError(errors.New("error not connected"))
+		return r
+	}
+	opts := new(relOptions)
+	for _, opt := range relOpts {
+		opt.set(opts)
+	}
+
+	rel := &utp.Relay{}
+	rel.RelayRequests = append(rel.RelayRequests, &utp.RelayRequest{Topic: topic, Last: opts.last})
+
+	if rel.MessageID == 0 {
+		mID := c.nextID(r)
+		rel.MessageID = c.outboundID(mID)
+	}
+	relayWaitTimeout := c.opts.writeTimeout
+	if relayWaitTimeout == 0 {
+		relayWaitTimeout = time.Second * 30
+	}
+	// persist outbound
+	c.storeOutbound(rel)
+	select {
+	case c.send <- &MessageAndResult{m: rel, r: r}:
+	case <-time.After(relayWaitTimeout):
+		r.setError(errors.New("relay request timeout error occurred"))
+		return r
+	}
+
+	return r
+}
+
 // Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
 func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
@@ -368,10 +406,7 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 	}
 
 	sub := &utp.Subscribe{}
-	sub.Subscriptions = append(sub.Subscriptions, &utp.Subscription{DeliveryMode: opts.deliveryMode, Delay: opts.delay, Topic: topic, Last: opts.last})
-
-	if opts.callback != nil {
-	}
+	sub.Subscriptions = append(sub.Subscriptions, &utp.Subscription{DeliveryMode: opts.deliveryMode, Delay: opts.delay, Topic: topic})
 
 	if sub.MessageID == 0 {
 		mID := c.nextID(r)
@@ -435,20 +470,35 @@ func (c *client) resume(prefix uint32, subscription bool) {
 		// isKeyOutbound
 		if (k & (1 << 4)) == 0 {
 			switch msg.Type() {
+			case utp.RELAY:
+				p := msg.(*utp.Relay)
+				r := &RelayResult{result: result{complete: make(chan struct{})}}
+				r.messageID = msg.Info().MessageID
+				c.messageIds.resumeID(MID(r.messageID))
+				// var topics []RelayRequest
+				// for _, req := range p.RelayRequests {
+				// 	var t RelayRequest
+				// 	t.Topic = req.Topic
+				// 	t.Last = req.Last
+				// 	topics = append(topics, t)
+				// }
+				r.reqs = p.RelayRequests
+				c.send <- &MessageAndResult{m: msg, r: r}
 			case utp.SUBSCRIBE:
 				if subscription {
 					p := msg.(*utp.Subscribe)
 					r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 					r.messageID = msg.Info().MessageID
 					c.messageIds.resumeID(MID(r.messageID))
-					var topics []Subscription
-					for _, sub := range p.Subscriptions {
-						var t Subscription
-						t.Topic = sub.Topic
-						t.DeliveryMode = sub.DeliveryMode
-						topics = append(topics, t)
-					}
-					r.subs = append(r.subs, topics...)
+					// var topics []Subscription
+					// for _, sub := range p.Subscriptions {
+					// 	var t Subscription
+					// 	t.Topic = sub.Topic
+					// 	t.DeliveryMode = sub.DeliveryMode
+					// 	topics = append(topics, t)
+					// }
+					// r.subs = append(r.subs, topics...)
+					r.subs = p.Subscriptions
 					c.send <- &MessageAndResult{m: msg, r: r}
 				}
 			case utp.UNSUBSCRIBE:

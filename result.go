@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unit-io/unitdb-go/utp"
+	"github.com/unit-io/unitdb-go/internal/utp"
 )
 
 // MessageAndResult is a type that contains both a Message and a Result.
@@ -109,18 +109,36 @@ func (r *PublishResult) MessageID() int32 {
 	return r.messageID
 }
 
-// Subscription is a struct for pairing the DeliveryMode and topic together
-// for the delivery mode's pairs in unsubscribe and subscribe
-type Subscription struct {
-	DeliveryMode int32
-	Topic        string
+// RelayResult is an extension of result containing the extra fields
+// required to provide information about calls to Relay()
+type RelayResult struct {
+	result
+	reqs      []*utp.RelayRequest
+	relResult map[string]byte
+	messageID int32
 }
+
+// Result returns a map of topics that were requested to along with
+// the matching return code from the server.
+func (r *RelayResult) Result() map[string]byte {
+	r.m.RLock()
+	defer r.m.RUnlock()
+	return r.relResult
+}
+
+// // Subscription is a struct for pairing the DeliveryMode and topic together
+// // for the delivery mode's pairs in unsubscribe and subscribe
+// type Subscription struct {
+// 	DeliveryMode int32
+// 	Topic        string
+// }
 
 // SubscribeResult is an extension of result containing the extra fields
 // required to provide information about calls to Subscribe()
 type SubscribeResult struct {
 	result
-	subs      []Subscription
+	// subs      []*Subscription
+	subs      []*utp.Subscription
 	subResult map[string]byte
 	messageID int32
 }

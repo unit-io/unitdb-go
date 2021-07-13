@@ -3,7 +3,7 @@ package adapter
 import (
 	"errors"
 
-	"github.com/unit-io/unitdb-go/store"
+	"github.com/unit-io/unitdb-go/internal/store"
 	"github.com/unit-io/unitdb/memdb"
 )
 

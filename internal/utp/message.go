@@ -16,6 +16,7 @@ const (
 	// Message
 	CONNECT MessageType = iota + 1
 	PUBLISH
+	RELAY
 	SUBSCRIBE
 	UNSUBSCRIBE
 	PINGREQ
@@ -26,13 +27,13 @@ const (
 // Below are the const definitions for error codes returned by
 // Connect()
 const (
-	Accepted                      = 0x00
-	ErrRefusedBadProtocolVersion  = 0x01
-	ErrRefusedIDRejected          = 0x02
-	ErrRefusedbADID               = 0x03
-	ErrRefusedServerUnavailable   = 0x04
-	ErrNotAuthorised              = 0x05
-	ErrBadRequest                 = 0x06
+	Accepted                     = 0x00
+	ErrRefusedBadProtocolVersion = 0x01
+	ErrRefusedIDRejected         = 0x02
+	ErrRefusedbADID              = 0x03
+	ErrRefusedServerUnavailable  = 0x04
+	ErrNotAuthorised             = 0x05
+	ErrBadRequest                = 0x06
 )
 
 func (t MessageType) Value() uint8 {
@@ -94,6 +95,8 @@ func Encode(msg Message) (bytes.Buffer, error) {
 		return encodeConnect(*msg.(*Connect))
 	case DISCONNECT:
 		return encodeDisconnect(*msg.(*Disconnect))
+	case RELAY:
+		return encodeRelay(*msg.(*Relay))
 	case SUBSCRIBE:
 		return encodeSubscribe(*msg.(*Subscribe))
 	case UNSUBSCRIBE:
@@ -105,7 +108,6 @@ func Encode(msg Message) (bytes.Buffer, error) {
 	default:
 		return bytes.Buffer{}, fmt.Errorf("message::Encode: Invalid zero-length packet type %d", msg.Type())
 	}
-	return bytes.Buffer{}, nil
 }
 
 func (fh *FixedHeader) pack() bytes.Buffer {

@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/unit-io/unitdb-go/utp"
+	"github.com/unit-io/unitdb-go/internal/utp"
 )
 
 // Message defines the externals that a message implementation must support
@@ -98,6 +98,6 @@ func newConnectMsgFromOptions(opts *options, server *url.URL) *utp.Connect {
 	m.BatchDuration = int32(opts.batchDuration.Milliseconds())
 	m.BatchByteThreshold = int32(opts.batchByteThreshold)
 	m.BatchCountThreshold = int32(opts.batchCountThreshold)
-	
+
 	return m
 }

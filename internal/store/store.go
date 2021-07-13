@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	adapter "github.com/unit-io/unitdb-go/db"
-	"github.com/unit-io/unitdb-go/utp"
+	adapter "github.com/unit-io/unitdb-go/internal/db"
+	"github.com/unit-io/unitdb-go/internal/utp"
 )
 
 var adp adapter.Adapter
@@ -108,7 +108,7 @@ func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
 		}
 		adp.PutMessage(okey, m.Bytes())
 	}
-	if outMsg.Type()==utp.FLOWCONTROL {
+	if outMsg.Type() == utp.FLOWCONTROL {
 		msg := *outMsg.(*utp.ControlMessage)
 		switch msg.FlowControl {
 		case utp.RECEIPT:
@@ -121,8 +121,8 @@ func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
 				return
 			}
 			adp.PutMessage(okey, m.Bytes())
+		}
 	}
-}
 }
 
 // handle which incoming messages are stored
@@ -139,7 +139,7 @@ func (l *MessageLog) PersistInbound(blockID uint32, inMsg utp.Message) {
 		}
 		adp.PutMessage(ikey, m.Bytes())
 	}
-	if inMsg.Type()==utp.FLOWCONTROL {
+	if inMsg.Type() == utp.FLOWCONTROL {
 		msg := *inMsg.(*utp.ControlMessage)
 		switch msg.FlowControl {
 		case utp.ACKNOWLEDGE, utp.COMPLETE:

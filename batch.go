@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unit-io/unitdb-go/utp"
+	"github.com/unit-io/unitdb-go/internal/utp"
 )
 
 const (

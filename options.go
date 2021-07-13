@@ -369,9 +369,50 @@ func WithTTL(ttl string) PubOptions {
 }
 
 // -------------------------------------------------------------
+type relOptions struct {
+	last     string
+	callback MessageHandler
+}
+
+// Re;Options it contains configurable options for Subscribe
+type RelOptions interface {
+	set(*relOptions)
+}
+
+// fRelOption wraps a function that modifies options into an
+// implementation of the RelOption interface.
+type fRelOption struct {
+	f func(*relOptions)
+}
+
+func (fo *fRelOption) set(o *relOptions) {
+	fo.f(o)
+}
+
+func newFuncRelOption(f func(*relOptions)) *fRelOption {
+	return &fRelOption{
+		f: f,
+	}
+}
+
+// WithLast allows to specify duration to retrive stored messages on a new relay request.
+func WithLast(last string) RelOptions {
+	return newFuncRelOption(func(o *relOptions) {
+		o.last = last
+	})
+}
+
+// WithRelayCallback sets handler function to be called
+// upon receiving published message for topic client has requested to relay.
+func WithRelayCallback(handler MessageHandler) RelOptions {
+	return newFuncRelOption(func(o *relOptions) {
+		o.callback = handler
+	})
+}
+
+// -------------------------------------------------------------
 type subOptions struct {
 	pubSubOptions
-	last     string
 	callback MessageHandler
 }
 
@@ -411,13 +452,6 @@ func WithSubDeliveryMode(deliveryMode int32) SubOptions {
 func WithSubDelay(delay time.Duration) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
 		o.delay = int32(delay.Milliseconds())
-	})
-}
-
-// WithLast allows to specify duration to retrive stored messages on a new subscription.
-func WithLast(last string) SubOptions {
-	return newFuncSubOption(func(o *subOptions) {
-		o.last = last
 	})
 }
 

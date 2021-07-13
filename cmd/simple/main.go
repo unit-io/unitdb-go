@@ -37,7 +37,15 @@ func main() {
 		log.Fatalf("err: %s", err)
 	}
 
-	r := client.Subscribe("teams.alpha.user1", unitdb.WithLast("1m"), unitdb.WithSubDeliveryMode(0))
+	var r unitdb.Result
+
+	r = client.Relay("ADcABeFRBDJKe/groups.private.673651407196578720.message", unitdb.WithLast("10m"))
+	if _, err := r.Get(ctx, 1*time.Second); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	r = client.Subscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message", unitdb.WithSubDeliveryMode(0))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -45,7 +53,7 @@ func main() {
 
 	for i := 0; i < 2; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		r := client.Publish("teams.alpha.user1", []byte(msg), unitdb.WithTTL("1m"), unitdb.WithPubDeliveryMode(0))
+		r := client.Publish("ADcABeFRBDJKe/groups.private.673651407196578720.message", []byte(msg), unitdb.WithTTL("1m"), unitdb.WithPubDeliveryMode(0))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -53,7 +61,7 @@ func main() {
 
 	wait := time.NewTicker(5 * time.Second)
 	<-wait.C
-	r = client.Unsubscribe("teams.alpha.user1")
+	r = client.Unsubscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
