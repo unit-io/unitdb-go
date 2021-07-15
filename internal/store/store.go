@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	adapter "github.com/unit-io/unitdb-go/internal/db"
-	"github.com/unit-io/unitdb-go/internal/utp"
+	lp "github.com/unit-io/unitdb-go/internal/net"
+	"github.com/unit-io/unitdb/server/utp"
 )
 
 var adp adapter.Adapter
@@ -95,13 +96,13 @@ type MessageLog struct{}
 var Log MessageLog
 
 // handle which outgoing messages are stored
-func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
+func (l *MessageLog) PersistOutbound(blockID uint32, outMsg lp.MessagePack) {
 	switch outMsg.(type) {
 	case *utp.Publish, *utp.Subscribe, *utp.Unsubscribe:
 		// Received a publish. store it in ibound
 		// until ACKNOWLEDGE or COMPLETE is sent
 		okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
-		m, err := utp.Encode(outMsg)
+		m, err := lp.Encode(outMsg)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -115,7 +116,7 @@ func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
 			// Received a RECEIPT control message. store it in obound
 			// until COMPLETE is received.
 			okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
-			m, err := utp.Encode(outMsg)
+			m, err := lp.Encode(outMsg)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -126,13 +127,13 @@ func (l *MessageLog) PersistOutbound(blockID uint32, outMsg utp.Message) {
 }
 
 // handle which incoming messages are stored
-func (l *MessageLog) PersistInbound(blockID uint32, inMsg utp.Message) {
+func (l *MessageLog) PersistInbound(blockID uint32, inMsg lp.MessagePack) {
 	switch inMsg.(type) {
 	case *utp.Publish:
 		// Received a publish. store it in ibound
 		// until COMPLETE sent
 		ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
-		m, err := utp.Encode(inMsg)
+		m, err := lp.Encode(inMsg)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -151,7 +152,7 @@ func (l *MessageLog) PersistInbound(blockID uint32, inMsg utp.Message) {
 			// Sending RECEIPT. store in obound
 			// until COMPLETE received
 			ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
-			m, err := utp.Encode(inMsg)
+			m, err := lp.Encode(inMsg)
 			if err != nil {
 				fmt.Println(err)
 				return
@@ -162,10 +163,10 @@ func (l *MessageLog) PersistInbound(blockID uint32, inMsg utp.Message) {
 }
 
 // Get performs a query and attempts to fetch message for the given key
-func (l *MessageLog) Get(key uint64) utp.Message {
+func (l *MessageLog) Get(key uint64) lp.MessagePack {
 	if raw, err := adp.GetMessage(key); raw != nil && err == nil {
 		r := bytes.NewReader(raw)
-		if msg, err := utp.Read(r); err == nil {
+		if msg, err := lp.Read(r); err == nil {
 			return msg
 		}
 	}

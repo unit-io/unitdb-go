@@ -38,7 +38,7 @@ type options struct {
 	password                []byte
 	cleanSession            bool
 	tLSConfig               *tls.Config
-	keepAlive               int64
+	keepAlive               int32
 	pingTimeout             time.Duration
 	connectTimeout          time.Duration
 	storePath               string
@@ -197,7 +197,7 @@ func WithTLSConfig(t *tls.Config) Options {
 // server.
 func WithKeepAlive(k time.Duration) Options {
 	return newFuncOption(func(o *options) {
-		o.keepAlive = int64(k / time.Second)
+		o.keepAlive = int32(k / time.Second)
 	})
 }
 
@@ -312,7 +312,7 @@ func WithResumeSubs() Options {
 
 // -------------------------------------------------------------
 type pubSubOptions struct {
-	deliveryMode int32
+	deliveryMode uint8
 	delay        int32
 }
 
@@ -347,7 +347,7 @@ func newFuncPubOption(f func(*pubOptions)) *fPubOption {
 // 0 EXPRESS
 // 1 RELIEABLE
 // 2 BATCH
-func WithPubDeliveryMode(deliveryMode int32) PubOptions {
+func WithPubDeliveryMode(deliveryMode uint8) PubOptions {
 	return newFuncPubOption(func(o *pubOptions) {
 		o.deliveryMode = deliveryMode
 	})
@@ -441,7 +441,7 @@ func newFuncSubOption(f func(*subOptions)) *fSubOption {
 // 0 EXPRESS
 // 1 RELIEABLE
 // 2 BATCH
-func WithSubDeliveryMode(deliveryMode int32) SubOptions {
+func WithSubDeliveryMode(deliveryMode uint8) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
 		o.deliveryMode = deliveryMode
 	})

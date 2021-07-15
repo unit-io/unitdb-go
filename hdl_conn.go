@@ -9,14 +9,15 @@ import (
 	"net"
 	"time"
 
-	"github.com/unit-io/unitdb-go/internal/utp"
+	lp "github.com/unit-io/unitdb-go/internal/net"
+	"github.com/unit-io/unitdb/server/utp"
 )
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Message
-func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32, err error) {
-	m, err := utp.Encode(cm)
+func Connect(conn net.Conn, cm *utp.Connect) (rc uint8, epoch int32, cid int32, err error) {
+	m, err := lp.Encode(cm)
 	if err != nil {
 		fmt.Println(err)
 		return utp.ErrRefusedServerUnavailable, 0, 0, err
@@ -31,21 +32,24 @@ func Connect(conn net.Conn, cm *utp.Connect) (rc int32, epoch int32, cid int32, 
 // when the connection is first started.
 // This prevents receiving incoming data while resume
 // is in progress if clean session is false.
-func verifyCONNACK(conn net.Conn) (int32, int32, int32, error) {
-	ca, err := utp.Read(conn)
+func verifyCONNACK(conn net.Conn) (uint8, int32, int32, error) {
+	ca, err := lp.Read(conn)
 	if err != nil {
 		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
 	if ca == nil {
-		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("nil Connect Acknowledge Message")
+		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("nil connect acknowledge message")
 	}
 
-	msg, ok := ca.(*utp.ConnectAcknowledge)
+	pack, ok := ca.(*utp.ControlMessage)
 	if !ok {
 		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("first message must be connect acknowledge message")
 	}
 
-	return msg.ReturnCode, msg.Epoch, msg.ConnID, nil
+	connack := &utp.ConnectAcknowledge{}
+	connack.FromBinary(utp.FixedHeader{MessageType: utp.CONNECT, FlowControl: utp.ACKNOWLEDGE}, pack.Message)
+
+	return connack.ReturnCode, connack.Epoch, connack.ConnID, nil
 }
 
 // Handle handles incoming messages
@@ -67,7 +71,7 @@ func (c *client) readLoop(ctx context.Context) error {
 			return nil
 		default:
 			// Unpack an incoming Message
-			msg, err := utp.Read(reader)
+			msg, err := lp.Read(reader)
 			if err != nil {
 				return err
 			}
@@ -84,7 +88,7 @@ func (c *client) readLoop(ctx context.Context) error {
 }
 
 // handle handles inbound messages.
-func (c *client) handler(inMsg utp.Message) error {
+func (c *client) handler(inMsg lp.MessagePack) error {
 	c.updateLastAction()
 
 	switch inMsg.Type() {
@@ -143,7 +147,7 @@ func (c *client) writeLoop(ctx context.Context) {
 				mId := c.inboundID(msg.MessageID)
 				c.freeID(mId)
 			}
-			m, err := utp.Encode(outMsg.m)
+			m, err := lp.Encode(outMsg.m)
 			if err != nil {
 				fmt.Println(err)
 				// return
@@ -183,7 +187,7 @@ func (c *client) dispatcher(ctx context.Context) {
 // keepalive - Send ping when connection unused for set period
 // connection passed in to avoid race condition on shutdown
 func (c *client) keepalive(ctx context.Context) {
-	var pingInterval int64
+	var pingInterval int32
 	var pingSent time.Time
 
 	if c.opts.keepAlive > 10 {
@@ -192,7 +196,7 @@ func (c *client) keepalive(ctx context.Context) {
 		pingInterval = c.opts.keepAlive / 2
 	}
 
-	pingTicker := time.NewTicker(time.Duration(pingInterval * int64(time.Second)))
+	pingTicker := time.NewTicker(time.Duration(pingInterval * int32(time.Second)))
 	defer func() {
 		pingTicker.Stop()
 	}()
@@ -206,12 +210,12 @@ func (c *client) keepalive(ctx context.Context) {
 		case <-pingTicker.C:
 			lastAction := c.lastAction.Load().(time.Time)
 			lastTouched := c.lastTouched.Load().(time.Time)
-			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int64(time.Second)))
+			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int32(time.Second)))
 			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
 			if lastAction.After(live) || lastTouched.After(live) {
 				ping := &utp.Pingreq{}
-				m, err := utp.Encode(ping)
+				m, err := lp.Encode(ping)
 				if err != nil {
 					fmt.Println(err)
 				}

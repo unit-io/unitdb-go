@@ -5,13 +5,13 @@ import (
 )
 
 // MID is 32-bit local message identifier
-type MID uint32
+type MID int32
 
 type messageIds struct {
 	sync.RWMutex
-	id    MID
+	id         MID
 	resumedIds map[MID]struct{}
-	index map[MID]Result // map[MID]Result
+	index      map[MID]Result // map[MID]Result
 }
 
 func (mids *messageIds) reset(id MID) {
@@ -36,7 +36,7 @@ func (mids *messageIds) nextID(r Result) MID {
 	mids.Lock()
 	defer mids.Unlock()
 	mids.id--
-	if _,ok:=mids.resumedIds[mids.id];ok{
+	if _, ok := mids.resumedIds[mids.id]; ok {
 		mids.nextID(r)
 	}
 	mids.index[mids.id] = r

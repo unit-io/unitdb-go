@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	lp "github.com/unit-io/unitdb-go/internal/net"
 	"github.com/unit-io/unitdb-go/internal/store"
-	"github.com/unit-io/unitdb-go/internal/utp"
 	"github.com/unit-io/unitdb/server/common"
 	pbx "github.com/unit-io/unitdb/server/proto"
+	"github.com/unit-io/unitdb/server/utp"
 	"google.golang.org/grpc"
 
 	// Database store
@@ -58,7 +59,7 @@ type client struct {
 	epoch      uint32   // The session ID of the connection.
 	conn       net.Conn // the network connection
 	send       chan *MessageAndResult
-	recv       chan utp.Message
+	recv       chan lp.MessagePack
 	pub        chan *utp.Publish
 	callbacks  map[uint64]MessageHandler
 
@@ -84,7 +85,7 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 		cancel:     cancel,
 		messageIds: messageIds{index: make(map[MID]Result)},
 		send:       make(chan *MessageAndResult, 1), // buffered
-		recv:       make(chan utp.Message),
+		recv:       make(chan lp.MessagePack),
 		pub:        make(chan *utp.Publish),
 		callbacks:  make(map[uint64]MessageHandler),
 		// close
@@ -543,12 +544,12 @@ func TimeNow() time.Time {
 	return time.Now().UTC().Round(time.Millisecond)
 }
 
-func (c *client) inboundID(id int32) MID {
-	return MID(c.connID - id)
+func (c *client) inboundID(id uint16) MID {
+	return MID(c.connID - int32(id))
 }
 
-func (c *client) outboundID(mid MID) (id int32) {
-	return c.connID - (int32(mid))
+func (c *client) outboundID(mid MID) (id uint16) {
+	return uint16(c.connID - (int32(mid)))
 }
 
 func (c *client) updateLastAction() {
@@ -561,11 +562,11 @@ func (c *client) updateLastTouched() {
 	c.lastTouched.Store(TimeNow())
 }
 
-func (c *client) storeInbound(m utp.Message) {
+func (c *client) storeInbound(m lp.MessagePack) {
 	store.Log.PersistInbound(uint32(c.sessID), m)
 }
 
-func (c *client) storeOutbound(m utp.Message) {
+func (c *client) storeOutbound(m lp.MessagePack) {
 	store.Log.PersistOutbound(uint32(c.sessID), m)
 }
 

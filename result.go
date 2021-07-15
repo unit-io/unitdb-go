@@ -5,14 +5,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/unit-io/unitdb-go/internal/utp"
+	lp "github.com/unit-io/unitdb-go/internal/net"
+	"github.com/unit-io/unitdb/server/utp"
 )
 
 // MessageAndResult is a type that contains both a Message and a Result.
 // This type is passed via channels between client connection interface and
 // goroutines responsible for sending and receiving messages from server
 type MessageAndResult struct {
-	m utp.Message
+	m lp.MessagePack
 	r Result
 }
 
@@ -100,12 +101,12 @@ func (r *ConnectResult) SessionPresent() bool {
 // required to provide information about calls to Publish()
 type PublishResult struct {
 	result
-	messageID int32
+	messageID uint16
 }
 
 // MessageID returns the message ID that was assigned to the
 // Publish Message when it was sent to the server
-func (r *PublishResult) MessageID() int32 {
+func (r *PublishResult) MessageID() uint16 {
 	return r.messageID
 }
 
@@ -115,7 +116,7 @@ type RelayResult struct {
 	result
 	reqs      []*utp.RelayRequest
 	relResult map[string]byte
-	messageID int32
+	messageID uint16
 }
 
 // Result returns a map of topics that were requested to along with
@@ -140,7 +141,7 @@ type SubscribeResult struct {
 	// subs      []*Subscription
 	subs      []*utp.Subscription
 	subResult map[string]byte
-	messageID int32
+	messageID uint16
 }
 
 // Result returns a map of topics that were subscribed to along with
@@ -169,11 +170,11 @@ type DisconnectResult struct {
 // required to provide information about calls to Put()
 type PutResult struct {
 	result
-	messageID int32
+	messageID uint16
 }
 
 // MessageID returns the message ID that was assigned to the
 // Publish Message when it was sent to the server
-func (r *PutResult) MessageID() int32 {
+func (r *PutResult) MessageID() uint16 {
 	return r.messageID
 }

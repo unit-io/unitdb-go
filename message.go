@@ -4,7 +4,7 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/unit-io/unitdb-go/internal/utp"
+	"github.com/unit-io/unitdb/server/utp"
 )
 
 // Message defines the externals that a message implementation must support
@@ -12,39 +12,29 @@ import (
 // messages
 type Message interface {
 	Topic() string
-	MessageID() int32
+	MessageID() uint16
 	Payload() []byte
 	Ack()
 }
 
 type message struct {
-	duplicate    bool
 	deliveryMode byte
-	retained     bool
 	topic        string
-	messageID    int32
+	messageID    uint16
 	payload      []byte
 	once         sync.Once
 	ack          func()
-}
-
-func (m *message) Duplicate() bool {
-	return m.duplicate
 }
 
 func (m *message) DeliveryMode() byte {
 	return m.deliveryMode
 }
 
-func (m *message) Retained() bool {
-	return m.retained
-}
-
 func (m *message) Topic() string {
 	return m.topic
 }
 
-func (m *message) MessageID() int32 {
+func (m *message) MessageID() uint16 {
 	return m.messageID
 }
 
