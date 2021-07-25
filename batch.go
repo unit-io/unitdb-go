@@ -22,12 +22,10 @@ type (
 		poolCapacity        int
 	}
 	batch struct {
-		count int
-		size  int
-		r     *PublishResult
-		msgs  []*utp.PublishMessage
-
-		timeRefs []timeID
+		count       int
+		size        int
+		r           *PublishResult
+		pubMessages []*utp.PublishMessage
 	}
 	// batchGroup   map[timeID]*batch
 	batchManager struct {
@@ -44,8 +42,8 @@ type (
 
 func (m *batchManager) newBatch(timeID timeID) *batch {
 	b := &batch{
-		r:    &PublishResult{result: result{complete: make(chan struct{})}},
-		msgs: make([]*utp.PublishMessage, 0),
+		r:           &PublishResult{result: result{complete: make(chan struct{})}},
+		pubMessages: make([]*utp.PublishMessage, 0),
 	}
 	m.batchGroup[timeID] = b
 
@@ -98,7 +96,7 @@ func (m *batchManager) close() {
 }
 
 // add adds a publish message to a batch in the batch group.
-func (m *batchManager) add(delay int32, p *utp.PublishMessage) *PublishResult {
+func (m *batchManager) add(delay int32, pubMsg *utp.PublishMessage) *PublishResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	timeID := m.TimeID(delay)
@@ -106,9 +104,9 @@ func (m *batchManager) add(delay int32, p *utp.PublishMessage) *PublishResult {
 	if !ok {
 		b = m.newBatch(timeID)
 	}
-	b.msgs = append(b.msgs, p)
+	b.pubMessages = append(b.pubMessages, pubMsg)
 	b.count++
-	b.size += len(p.Payload)
+	b.size += len(pubMsg.Payload)
 	if b.count > m.opts.batchCountThreshold || b.size > m.opts.batchByteThreshold {
 		m.push(b)
 		delete(m.batchGroup, timeID)
@@ -118,7 +116,7 @@ func (m *batchManager) add(delay int32, p *utp.PublishMessage) *PublishResult {
 
 // push enqueues a batch to publish.
 func (m *batchManager) push(b *batch) {
-	if len(b.msgs) != 0 {
+	if len(b.pubMessages) != 0 {
 		m.publishQueue <- b
 	}
 }
@@ -165,22 +163,18 @@ func (m *batchManager) publishLoop(interval time.Duration) {
 // dispatch handles publishing messages for the batches in queue.
 func (m *batchManager) dispatch(timeout time.Duration) {
 LOOP:
-	for {
-		select {
-		case b, ok := <-m.publishQueue:
-			if !ok {
-				close(m.send)
-				m.stopWg.Done()
-				return
-			}
+	b, ok := <-m.publishQueue
+	if !ok {
+		close(m.send)
+		m.stopWg.Done()
+		return
+	}
 
-			select {
-			case m.send <- b:
-			default:
-				// pool is full, let GC handle the batches
-				goto WAIT
-			}
-		}
+	select {
+	case m.send <- b:
+	default:
+		// pool is full, let GC handle the batches
+		goto WAIT
 	}
 
 WAIT:
@@ -196,31 +190,26 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 		case <-m.stop:
 			// run queued messges from the publish queue and
 			// process it until queue is empty.
-			for {
-				select {
-				case b, ok := <-m.send:
-					if !ok {
-						m.stopWg.Done()
-						return
-					}
-					pub := &utp.Publish{DeliveryMode: 2, Messages: b.msgs}
-					mID := c.nextID(b.r)
-					pub.MessageID = c.outboundID(mID)
+			b, ok := <-m.send
+			if !ok {
+				m.stopWg.Done()
+				return
+			}
+			pub := &utp.Publish{DeliveryMode: 2, Messages: b.pubMessages}
+			mID := c.nextID(b.r)
+			pub.MessageID = c.outboundID(mID)
 
-					// persist outbound
-					c.storeOutbound(pub)
+			// persist outbound
+			c.storeOutbound(pub)
 
-					select {
-					case c.send <- &MessageAndResult{m: pub, r: b.r}:
-					case <-time.After(publishWaitTimeout):
-						b.r.setError(errors.New("publish timeout error occurred"))
-					}
-				default:
-				}
+			select {
+			case c.send <- &MessageAndResult{m: pub, r: b.r}:
+			case <-time.After(publishWaitTimeout):
+				b.r.setError(errors.New("publish timeout error occurred"))
 			}
 		case b := <-m.send:
 			if b != nil {
-				pub := &utp.Publish{DeliveryMode: 2, Messages: b.msgs}
+				pub := &utp.Publish{DeliveryMode: 2, Messages: b.pubMessages}
 				mID := c.nextID(b.r)
 				pub.MessageID = c.outboundID(mID)
 

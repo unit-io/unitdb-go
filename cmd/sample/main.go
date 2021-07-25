@@ -73,8 +73,10 @@ func main() {
 				}
 				close(recv)
 			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
-				recv <- [2][]byte{[]byte(msg.Topic()), msg.Payload()}
+			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
+				for _, msg := range pubMsg.Messages() {
+					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
+				}
 			}),
 		)
 		if err != nil {
@@ -133,8 +135,10 @@ func main() {
 				}
 				close(recv)
 			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
-				recv <- [2][]byte{[]byte(msg.Topic()), msg.Payload()}
+			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
+				for _, msg := range pubMsg.Messages() {
+					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
+				}
 			}),
 			unitdb.WithBatchDuration(10*time.Second),
 		)
@@ -217,8 +221,10 @@ func main() {
 				}
 				close(recv)
 			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, msg unitdb.Message) {
-				recv <- [2][]byte{[]byte(msg.Topic()), msg.Payload()}
+			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
+				for _, msg := range pubMsg.Messages() {
+					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
+				}
 			}),
 			unitdb.WithBatchDuration(10*time.Second),
 		)

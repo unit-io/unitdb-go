@@ -10,9 +10,11 @@ import (
 	unitdb "github.com/unit-io/unitdb-go"
 )
 
-var f unitdb.MessageHandler = func(client unitdb.Client, msg unitdb.Message) {
-	fmt.Printf("TOPIC: %s\n", msg.Topic())
-	fmt.Printf("MSG: %s\n", msg.Payload())
+var f unitdb.MessageHandler = func(client unitdb.Client, pubMsg unitdb.PubMessage) {
+	for _, msg := range pubMsg.Messages() {
+		fmt.Printf("TOPIC: %s\n", msg.Topic)
+		fmt.Printf("MSG: %s\n", msg.Payload)
+	}
 }
 
 func main() {

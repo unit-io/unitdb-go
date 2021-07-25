@@ -93,26 +93,26 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 
 	switch inMsg.Type() {
 	case utp.FLOWCONTROL:
-		m := *inMsg.(*utp.ControlMessage)
-		switch m.FlowControl {
+		ctrlMsg := *inMsg.(*utp.ControlMessage)
+		switch ctrlMsg.FlowControl {
 		case utp.ACKNOWLEDGE:
-			switch m.MessageType {
+			switch ctrlMsg.MessageType {
 			case utp.PINGREQ:
 				c.updateLastTouched()
 			case utp.SUBSCRIBE, utp.UNSUBSCRIBE, utp.RELAY, utp.PUBLISH:
-				mId := c.inboundID(m.MessageID)
+				mId := c.inboundID(ctrlMsg.MessageID)
 				c.getType(mId).flowComplete()
 				c.freeID(mId)
 			}
 		case utp.NOTIFY:
 			recv := &utp.ControlMessage{
-				MessageID:   m.MessageID,
+				MessageID:   ctrlMsg.MessageID,
 				MessageType: utp.PUBLISH,
 				FlowControl: utp.RECEIVE,
 			}
 			c.send <- &MessageAndResult{m: recv}
 		case utp.COMPLETE:
-			mId := c.inboundID(m.MessageID)
+			mId := c.inboundID(ctrlMsg.MessageID)
 			r := c.getType(mId)
 			if r != nil {
 				r.flowComplete()
@@ -147,12 +147,12 @@ func (c *client) writeLoop(ctx context.Context) {
 				mId := c.inboundID(msg.MessageID)
 				c.freeID(mId)
 			}
-			m, err := lp.Encode(outMsg.m)
+			buf, err := lp.Encode(outMsg.m)
 			if err != nil {
 				fmt.Println(err)
 				// return
 			}
-			c.conn.Write(m.Bytes())
+			c.conn.Write(buf.Bytes())
 		}
 	}
 }
@@ -165,20 +165,17 @@ func (c *client) dispatcher(ctx context.Context) {
 			return
 		case <-c.closeC:
 			return
-		case msg, ok := <-c.pub:
+		case pub, ok := <-c.pub:
 			if !ok {
 				// Channel closed.
 				return
 			}
-			msgs := messageFromPublish(msg, ack(c, msg))
+			pubMsg := messageFromPublish(pub, ack(c, pub))
 			// dispatch message to default callback function
 			handler := c.callbacks[0]
 			go func() {
-				var m Message
-				for _, m = range msgs {
-					handler(c, m)
-				}
-				m.Ack()
+				handler(c, pubMsg)
+				pubMsg.Ack()
 			}()
 		}
 	}

@@ -370,21 +370,21 @@ func (c *client) Relay(topic string, relOpts ...RelOptions) Result {
 		opt.set(opts)
 	}
 
-	rel := &utp.Relay{}
-	rel.RelayRequests = append(rel.RelayRequests, &utp.RelayRequest{Topic: topic, Last: opts.last})
+	relMsg := &utp.Relay{}
+	relMsg.RelayRequests = append(relMsg.RelayRequests, &utp.RelayRequest{Topic: topic, Last: opts.last})
 
-	if rel.MessageID == 0 {
+	if relMsg.MessageID == 0 {
 		mID := c.nextID(r)
-		rel.MessageID = c.outboundID(mID)
+		relMsg.MessageID = c.outboundID(mID)
 	}
 	relayWaitTimeout := c.opts.writeTimeout
 	if relayWaitTimeout == 0 {
 		relayWaitTimeout = time.Second * 30
 	}
 	// persist outbound
-	c.storeOutbound(rel)
+	c.storeOutbound(relMsg)
 	select {
-	case c.send <- &MessageAndResult{m: rel, r: r}:
+	case c.send <- &MessageAndResult{m: relMsg, r: r}:
 	case <-time.After(relayWaitTimeout):
 		r.setError(errors.New("relay request timeout error occurred"))
 		return r
@@ -406,21 +406,21 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 		opt.set(opts)
 	}
 
-	sub := &utp.Subscribe{}
-	sub.Subscriptions = append(sub.Subscriptions, &utp.Subscription{DeliveryMode: opts.deliveryMode, Delay: opts.delay, Topic: topic})
+	subMsg := &utp.Subscribe{}
+	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: opts.deliveryMode, Delay: opts.delay, Topic: topic})
 
-	if sub.MessageID == 0 {
+	if subMsg.MessageID == 0 {
 		mID := c.nextID(r)
-		sub.MessageID = c.outboundID(mID)
+		subMsg.MessageID = c.outboundID(mID)
 	}
 	subscribeWaitTimeout := c.opts.writeTimeout
 	if subscribeWaitTimeout == 0 {
 		subscribeWaitTimeout = time.Second * 30
 	}
 	// persist outbound
-	c.storeOutbound(sub)
+	c.storeOutbound(subMsg)
 	select {
-	case c.send <- &MessageAndResult{m: sub, r: r}:
+	case c.send <- &MessageAndResult{m: subMsg, r: r}:
 	case <-time.After(subscribeWaitTimeout):
 		r.setError(errors.New("subscribe timeout error occurred"))
 		return r
@@ -434,25 +434,25 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 // received.
 func (c *client) Unsubscribe(topics ...string) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
-	unsub := &utp.Unsubscribe{}
+	unsubMsg := &utp.Unsubscribe{}
 	var subs []*utp.Subscription
 	for _, topic := range topics {
 		sub := &utp.Subscription{Topic: topic}
 		subs = append(subs, sub)
 	}
-	unsub.Subscriptions = subs
-	if unsub.MessageID == 0 {
+	unsubMsg.Subscriptions = subs
+	if unsubMsg.MessageID == 0 {
 		mID := c.nextID(r)
-		unsub.MessageID = c.outboundID(mID)
+		unsubMsg.MessageID = c.outboundID(mID)
 	}
 	unsubscribeWaitTimeout := c.opts.writeTimeout
 	if unsubscribeWaitTimeout == 0 {
 		unsubscribeWaitTimeout = time.Second * 30
 	}
 	// persist outbound
-	c.storeOutbound(unsub)
+	c.storeOutbound(unsubMsg)
 	select {
-	case c.send <- &MessageAndResult{m: unsub, r: r}:
+	case c.send <- &MessageAndResult{m: unsubMsg, r: r}:
 	case <-time.After(unsubscribeWaitTimeout):
 		r.setError(errors.New("unsubscribe timeout error occurred"))
 		return r
@@ -472,34 +472,19 @@ func (c *client) resume(prefix uint32, subscription bool) {
 		if (k & (1 << 4)) == 0 {
 			switch msg.Type() {
 			case utp.RELAY:
-				p := msg.(*utp.Relay)
+				relMsg := msg.(*utp.Relay)
 				r := &RelayResult{result: result{complete: make(chan struct{})}}
 				r.messageID = msg.Info().MessageID
 				c.messageIds.resumeID(MID(r.messageID))
-				// var topics []RelayRequest
-				// for _, req := range p.RelayRequests {
-				// 	var t RelayRequest
-				// 	t.Topic = req.Topic
-				// 	t.Last = req.Last
-				// 	topics = append(topics, t)
-				// }
-				r.reqs = p.RelayRequests
+				r.reqs = relMsg.RelayRequests
 				c.send <- &MessageAndResult{m: msg, r: r}
 			case utp.SUBSCRIBE:
 				if subscription {
-					p := msg.(*utp.Subscribe)
+					subMsg := msg.(*utp.Subscribe)
 					r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 					r.messageID = msg.Info().MessageID
 					c.messageIds.resumeID(MID(r.messageID))
-					// var topics []Subscription
-					// for _, sub := range p.Subscriptions {
-					// 	var t Subscription
-					// 	t.Topic = sub.Topic
-					// 	t.DeliveryMode = sub.DeliveryMode
-					// 	topics = append(topics, t)
-					// }
-					// r.subs = append(r.subs, topics...)
-					r.subs = p.Subscriptions
+					r.subs = subMsg.Subscriptions
 					c.send <- &MessageAndResult{m: msg, r: r}
 				}
 			case utp.UNSUBSCRIBE:
@@ -515,10 +500,10 @@ func (c *client) resume(prefix uint32, subscription bool) {
 				c.messageIds.resumeID(MID(r.messageID))
 				c.send <- &MessageAndResult{m: msg, r: r}
 			case utp.FLOWCONTROL:
-				ctrl := msg.(*utp.ControlMessage)
-				switch ctrl.FlowControl {
+				ctrlMsg := msg.(*utp.ControlMessage)
+				switch ctrlMsg.FlowControl {
 				case utp.RECEIPT:
-					c.send <- &MessageAndResult{m: ctrl}
+					c.send <- &MessageAndResult{m: ctrlMsg}
 				}
 			default:
 				store.Log.Delete(k)
@@ -526,9 +511,9 @@ func (c *client) resume(prefix uint32, subscription bool) {
 		} else {
 			switch msg.Type() {
 			case utp.FLOWCONTROL:
-				ctrl := msg.(*utp.ControlMessage)
-				c.messageIds.resumeID(MID(ctrl.MessageID))
-				switch ctrl.FlowControl {
+				ctrlMsg := msg.(*utp.ControlMessage)
+				c.messageIds.resumeID(MID(ctrlMsg.MessageID))
+				switch ctrlMsg.FlowControl {
 				case utp.NOTIFY:
 					c.recv <- msg
 				}

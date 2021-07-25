@@ -8,4 +8,4 @@ require (
 	google.golang.org/grpc v1.39.0
 )
 
-replace github.com/unit-io/unitdb => /src/github.com/unit-io/unitdb
+// replace github.com/unit-io/unitdb => /src/github.com/unit-io/unitdb
