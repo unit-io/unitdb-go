@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -38,12 +39,16 @@ type Client interface {
 	// Publish will publish a message with the specified DeliveryMode and content
 	// to the specified topic.
 	Publish(topic string, payload []byte, pubOpts ...PubOptions) Result
+	// Relay sends a request to relay messages for one or more topics those are persisted on the server.
+	// Provide a MessageHandler to be executed when a message is published on the topic provided,
+	// or nil for the default handler.
+	Relay(topics []string, relOpts ...RelOptions) Result
 	// Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 	// a message is published on the topic provided, or nil for the default handler.
-	// Relay sends a relay request to server. Provide a MessageHandler to be executed when
-	// a message is published on the topic provided, or nil for the default handler.
-	Relay(topic string, relOpts ...RelOptions) Result
 	Subscribe(topic string, subOpts ...SubOptions) Result
+	// SubscribeMultiple starts a new subscription for multiple topics. Provide a MessageHandler to be executed when
+	// a message is published on the topic provided, or nil for the default handler.
+	SubscribeMultiple(subs []string, subOpts ...SubOptions) Result
 	// Unsubscribe will end the subscription from each of the topics provided.
 	// Messages published to those topics from other clients will no longer be
 	// received.
@@ -312,7 +317,7 @@ func (c *client) serverDisconnect(err error) {
 
 // Publish will publish a message with the specified DeliveryMode and content
 // to the specified topic.
-func (c *client) Publish(topic string, payload []byte, pubOpts ...PubOptions) Result {
+func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions) Result {
 	r := &PublishResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
@@ -324,22 +329,52 @@ func (c *client) Publish(topic string, payload []byte, pubOpts ...PubOptions) Re
 		opt.set(opts)
 	}
 
+	deliveryMode := opts.deliveryMode
+	delay := opts.delay
+	ttl := opts.ttl
+	t := new(topic)
+
+	// parse the topic.
+	if ok := t.parse(pubTopic); !ok {
+		r.setError(errors.New("publish: unable to parse topic"))
+		return r
+	}
+
+	if dMode, ok := t.getOption("delivery_mode"); ok {
+		val, err := strconv.ParseInt(dMode, 10, 64)
+		if err == nil {
+			deliveryMode = uint8(val)
+		}
+	}
+
+	if d, ok := t.getOption("delay"); ok {
+		val, err := strconv.ParseInt(d, 10, 64)
+		if err == nil {
+			delay = int32(val)
+		}
+	}
+
+	if dur, ok := t.getOption("ttl"); ok {
+		ttl = dur
+	}
+
 	pubMsg := &utp.PublishMessage{
-		Topic:   topic,
+		Topic:   t.topic,
 		Payload: payload,
-		Ttl:     opts.ttl,
+		Ttl:     ttl,
 	}
 
 	// Check batch or delay delivery.
-	if opts.deliveryMode == 2 || opts.delay > 0 {
-		// timeID := c.TimeID(opts.delay)
-		return c.batchManager.add(opts.delay, pubMsg)
+	if deliveryMode == 2 || delay > 0 {
+		return c.batchManager.add(delay, pubMsg)
 	}
-	pub := &utp.Publish{DeliveryMode: opts.deliveryMode, Messages: []*utp.PublishMessage{pubMsg}}
+	pub := &utp.Publish{DeliveryMode: deliveryMode, Messages: []*utp.PublishMessage{pubMsg}}
+
 	if pub.MessageID == 0 {
 		mID := c.nextID(r)
 		pub.MessageID = c.outboundID(mID)
 	}
+
 	publishWaitTimeout := c.opts.writeTimeout
 	if publishWaitTimeout == 0 {
 		publishWaitTimeout = time.Second * 30
@@ -354,35 +389,56 @@ func (c *client) Publish(topic string, payload []byte, pubOpts ...PubOptions) Re
 		r.setError(errors.New("publish timeout error occurred"))
 		return r
 	}
+
 	return r
 }
 
 // Relay send a new relay request. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
-func (c *client) Relay(topic string, relOpts ...RelOptions) Result {
+func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 	r := &RelayResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
 		return r
 	}
+
 	opts := new(relOptions)
 	for _, opt := range relOpts {
 		opt.set(opts)
 	}
 
 	relMsg := &utp.Relay{}
-	relMsg.RelayRequests = append(relMsg.RelayRequests, &utp.RelayRequest{Topic: topic, Last: opts.last})
+
+	for _, relTopic := range topics {
+		last := opts.last
+		t := new(topic)
+
+		// parse the topic.
+		if ok := t.parse(relTopic); !ok {
+			r.setError(errors.New("relay: unable to parse topic"))
+			return r
+		}
+
+		if dur, ok := t.getOption("last"); ok {
+			last = dur
+		}
+
+		relMsg.RelayRequests = append(relMsg.RelayRequests, &utp.RelayRequest{Topic: t.topic, Last: last})
+	}
 
 	if relMsg.MessageID == 0 {
 		mID := c.nextID(r)
 		relMsg.MessageID = c.outboundID(mID)
 	}
+
 	relayWaitTimeout := c.opts.writeTimeout
 	if relayWaitTimeout == 0 {
 		relayWaitTimeout = time.Second * 30
 	}
+
 	// persist outbound
 	c.storeOutbound(relMsg)
+
 	select {
 	case c.send <- &MessageAndResult{m: relMsg, r: r}:
 	case <-time.After(relayWaitTimeout):
@@ -395,30 +451,125 @@ func (c *client) Relay(topic string, relOpts ...RelOptions) Result {
 
 // Subscribe starts a new subscription. Provide a MessageHandler to be executed when
 // a message is published on the topic provided.
-func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
+func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
 		r.setError(errors.New("error not connected"))
 		return r
 	}
+
 	opts := new(subOptions)
 	for _, opt := range subOpts {
 		opt.set(opts)
 	}
 
 	subMsg := &utp.Subscribe{}
-	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: opts.deliveryMode, Delay: opts.delay, Topic: topic})
+
+	deliveryMode := opts.deliveryMode
+	delay := opts.delay
+	t := new(topic)
+
+	// parse the topic.
+	if ok := t.parse(subTopic); !ok {
+		r.setError(errors.New("subscribe: unable to parse topic"))
+		return r
+	}
+
+	if dMode, ok := t.getOption("delivery_mode"); ok {
+		val, err := strconv.ParseInt(dMode, 10, 64)
+		if err == nil {
+			deliveryMode = uint8(val)
+		}
+	}
+
+	if d, ok := t.getOption("delay"); ok {
+		val, err := strconv.ParseInt(d, 10, 64)
+		if err == nil {
+			delay = int32(val)
+		}
+	}
+
+	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.topic})
 
 	if subMsg.MessageID == 0 {
 		mID := c.nextID(r)
 		subMsg.MessageID = c.outboundID(mID)
 	}
+
 	subscribeWaitTimeout := c.opts.writeTimeout
 	if subscribeWaitTimeout == 0 {
 		subscribeWaitTimeout = time.Second * 30
 	}
+
 	// persist outbound
 	c.storeOutbound(subMsg)
+
+	select {
+	case c.send <- &MessageAndResult{m: subMsg, r: r}:
+	case <-time.After(subscribeWaitTimeout):
+		r.setError(errors.New("subscribe timeout error occurred"))
+		return r
+	}
+
+	return r
+}
+
+// SubscribeMultiple starts a new subscription. Provide a MessageHandler to be executed when
+// a message is published on the topic provided.
+func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Result {
+	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
+	if err := c.ok(); err != nil {
+		r.setError(errors.New("error not connected"))
+		return r
+	}
+
+	opts := new(subOptions)
+	for _, opt := range subOpts {
+		opt.set(opts)
+	}
+
+	subMsg := &utp.Subscribe{}
+	for _, subTopic := range topics {
+		deliveryMode := opts.deliveryMode
+		delay := opts.delay
+		t := new(topic)
+
+		// parse the topic.
+		if ok := t.parse(subTopic); !ok {
+			r.setError(errors.New("SubscribeMultiple: unable to parse topic"))
+			return r
+		}
+
+		if dMode, ok := t.getOption("delivery_mode"); ok {
+			val, err := strconv.ParseInt(dMode, 10, 64)
+			if err == nil {
+				deliveryMode = uint8(val)
+			}
+		}
+
+		if d, ok := t.getOption("delay"); ok {
+			val, err := strconv.ParseInt(d, 10, 64)
+			if err == nil {
+				delay = int32(val)
+			}
+		}
+
+		subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.topic})
+	}
+
+	if subMsg.MessageID == 0 {
+		mID := c.nextID(r)
+		subMsg.MessageID = c.outboundID(mID)
+	}
+
+	subscribeWaitTimeout := c.opts.writeTimeout
+	if subscribeWaitTimeout == 0 {
+		subscribeWaitTimeout = time.Second * 30
+	}
+
+	// persist outbound
+	c.storeOutbound(subMsg)
+
 	select {
 	case c.send <- &MessageAndResult{m: subMsg, r: r}:
 	case <-time.After(subscribeWaitTimeout):
@@ -434,6 +585,7 @@ func (c *client) Subscribe(topic string, subOpts ...SubOptions) Result {
 // received.
 func (c *client) Unsubscribe(topics ...string) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
+
 	unsubMsg := &utp.Unsubscribe{}
 	var subs []*utp.Subscription
 	for _, topic := range topics {
@@ -441,22 +593,27 @@ func (c *client) Unsubscribe(topics ...string) Result {
 		subs = append(subs, sub)
 	}
 	unsubMsg.Subscriptions = subs
+
 	if unsubMsg.MessageID == 0 {
 		mID := c.nextID(r)
 		unsubMsg.MessageID = c.outboundID(mID)
 	}
+
 	unsubscribeWaitTimeout := c.opts.writeTimeout
 	if unsubscribeWaitTimeout == 0 {
 		unsubscribeWaitTimeout = time.Second * 30
 	}
+
 	// persist outbound
 	c.storeOutbound(unsubMsg)
+
 	select {
 	case c.send <- &MessageAndResult{m: unsubMsg, r: r}:
 	case <-time.After(unsubscribeWaitTimeout):
 		r.setError(errors.New("unsubscribe timeout error occurred"))
 		return r
 	}
+
 	return r
 }
 

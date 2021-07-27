@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
-	unitdb "github.com/unit-io/unitdb-go"
+	udb "github.com/unit-io/unitdb-go"
 )
 
-var f unitdb.MessageHandler = func(client unitdb.Client, pubMsg unitdb.PubMessage) {
+var f udb.MessageHandler = func(client udb.Client, pubMsg udb.PubMessage) {
 	for _, msg := range pubMsg.Messages() {
 		fmt.Printf("TOPIC: %s\n", msg.Topic)
 		fmt.Printf("MSG: %s\n", msg.Payload)
@@ -18,17 +18,17 @@ var f unitdb.MessageHandler = func(client unitdb.Client, pubMsg unitdb.PubMessag
 }
 
 func main() {
-	client, err := unitdb.NewClient(
+	client, err := udb.NewClient(
 		//"tcp://localhost:6060",
 		// "ws://localhost:6080",
 		"grpc://localhost:6080",
 		"UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ",
-		unitdb.WithCleanSession(),
-		unitdb.WithInsecure(),
-		unitdb.WithBatchDuration(1*time.Second),
-		unitdb.WithKeepAlive(2*time.Second),
-		unitdb.WithPingTimeout(1*time.Second),
-		unitdb.WithDefaultMessageHandler(f),
+		udb.WithCleanSession(),
+		udb.WithInsecure(),
+		udb.WithBatchDuration(1*time.Second),
+		udb.WithKeepAlive(2*time.Second),
+		udb.WithPingTimeout(1*time.Second),
+		udb.WithDefaultMessageHandler(f),
 	)
 	if err != nil {
 		log.Fatalf("err: %s", err)
@@ -39,15 +39,15 @@ func main() {
 		log.Fatalf("err: %s", err)
 	}
 
-	var r unitdb.Result
+	var r udb.Result
 
-	r = client.Relay("ADcABeFRBDJKe/groups.private.673651407196578720.message", unitdb.WithLast("10m"))
+	r = client.Relay([]string{"ADcABeFRBDJKe/groups.private.673651407196578720.message"}, udb.WithLast("10m"))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	r = client.Subscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message", unitdb.WithSubDeliveryMode(0))
+	r = client.Subscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message", udb.WithSubDeliveryMode(0))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -55,7 +55,7 @@ func main() {
 
 	for i := 0; i < 2; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		r := client.Publish("ADcABeFRBDJKe/groups.private.673651407196578720.message", []byte(msg), unitdb.WithTTL("1m"), unitdb.WithPubDeliveryMode(0))
+		r := client.Publish("ADcABeFRBDJKe/groups.private.673651407196578720.message", []byte(msg), udb.WithTTL("1m"), udb.WithPubDeliveryMode(0))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}

@@ -236,7 +236,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Relay(*topic, unitdb.WithLast("1m"))
+		r := client.Relay([]string{*topic}, unitdb.WithLast("1m"))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
