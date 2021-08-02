@@ -10,10 +10,16 @@ import (
 	udb "github.com/unit-io/unitdb-go"
 )
 
-var f udb.MessageHandler = func(client udb.Client, pubMsg udb.PubMessage) {
-	for _, msg := range pubMsg.Messages() {
-		fmt.Printf("TOPIC: %s\n", msg.Topic)
-		fmt.Printf("MSG: %s\n", msg.Payload)
+var messageHandler = func(ctx context.Context, topicFilter *udb.TopicFilter) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case messages := <-topicFilter.Updates():
+			for _, msg := range messages {
+				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", msg.Topic, msg.Payload)
+			}
+		}
 	}
 }
 
@@ -28,7 +34,6 @@ func main() {
 		udb.WithBatchDuration(1*time.Second),
 		udb.WithKeepAlive(2*time.Second),
 		udb.WithPingTimeout(1*time.Second),
-		udb.WithDefaultMessageHandler(f),
 	)
 	if err != nil {
 		log.Fatalf("err: %s", err)
@@ -41,13 +46,21 @@ func main() {
 
 	var r udb.Result
 
-	r = client.Relay([]string{"ADcABeFRBDJKe/groups.private.673651407196578720.message"}, udb.WithLast("10m"))
+	privateGroupFilter, err := client.TopicFilter("groups.private...")
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	go messageHandler(ctx, privateGroupFilter)
+
+	r = client.Relay([]string{"groups.private.673651407196578720.message"}, udb.WithLast("10m"))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	r = client.Subscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message", udb.WithSubDeliveryMode(0))
+	r = client.Subscribe("groups.private.673651407196578720.message", udb.WithSubDeliveryMode(0))
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -55,7 +68,7 @@ func main() {
 
 	for i := 0; i < 2; i++ {
 		msg := fmt.Sprintf("Hi #%d time!", i)
-		r := client.Publish("ADcABeFRBDJKe/groups.private.673651407196578720.message", []byte(msg), udb.WithTTL("1m"), udb.WithPubDeliveryMode(0))
+		r := client.Publish("groups.private.673651407196578720.message", []byte(msg), udb.WithTTL("1m"), udb.WithPubDeliveryMode(0))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -63,11 +76,11 @@ func main() {
 
 	wait := time.NewTicker(5 * time.Second)
 	<-wait.C
-	r = client.Unsubscribe("ADcABeFRBDJKe/groups.private.673651407196578720.message")
+	r = client.Unsubscribe("groups.private.673651407196578720.message")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 	wait.Stop()
-	client.Disconnect()
+	client.DisconnectContext(ctx)
 }

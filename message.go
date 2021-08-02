@@ -7,56 +7,56 @@ import (
 	"github.com/unit-io/unitdb/server/utp"
 )
 
-// PubMessage defines the externals that a message implementation must support
+// Message defines the externals that a message implementation must support
 // these are received messages that are passed, not internal
 // messages
-type PubMessage interface {
+type Message interface {
 	DeliveryMode() uint8
 	MessageID() uint16
-	Messages() []*Message
+	Messages() []PubMessage
 	Ack()
 }
 
-type Message struct {
+type PubMessage struct {
 	Topic   string
 	Payload []byte
 }
 
-type pubMessage struct {
+type message struct {
 	deliveryMode uint8
 	messageID    uint16
-	messages     []*Message
+	messages     []PubMessage
 	once         sync.Once
 	ack          func()
 }
 
-func (m *pubMessage) DeliveryMode() uint8 {
+func (m *message) DeliveryMode() uint8 {
 	return m.deliveryMode
 }
 
-func (m *pubMessage) MessageID() uint16 {
+func (m *message) MessageID() uint16 {
 	return m.messageID
 }
 
-func (m *pubMessage) Messages() []*Message {
+func (m *message) Messages() []PubMessage {
 	return m.messages
 }
 
-func (m *pubMessage) Ack() {
+func (m *message) Ack() {
 	m.once.Do(m.ack)
 }
 
-func messageFromPublish(p *utp.Publish, ack func()) *pubMessage {
-	var messages []*Message
+func messageFromPublish(p *utp.Publish, ack func()) *message {
+	var messages []PubMessage
 	for _, pubMsg := range p.Messages {
-		msg := &Message{
+		msg := PubMessage{
 			Topic:   pubMsg.Topic,
 			Payload: pubMsg.Payload,
 		}
 		messages = append(messages, msg)
 	}
 
-	return &pubMessage{
+	return &message{
 		deliveryMode: p.DeliveryMode,
 		messageID:    p.MessageID,
 		messages:     messages,

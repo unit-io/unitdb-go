@@ -170,12 +170,11 @@ func (c *client) dispatcher(ctx context.Context) {
 				// Channel closed.
 				return
 			}
-			pubMsg := messageFromPublish(pub, ack(c, pub))
+			msg := messageFromPublish(pub, ack(c, pub))
 			// dispatch message to default callback function
-			handler := c.callbacks[0]
 			go func() {
-				handler(c, pubMsg)
-				pubMsg.Ack()
+				c.notifier.notify(msg.messages)
+				msg.Ack()
 			}()
 		}
 	}

@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	unitdb "github.com/unit-io/unitdb-go"
+	udb "github.com/unit-io/unitdb-go"
 )
 
 /*
@@ -24,11 +24,23 @@ Options:
  [-password <password>]       Password
  [-server <uri>]              Server URI
  [-topic <topic>]             Topic
-
 */
 
+var messageHandler = func(ctx context.Context, topicFilter *udb.TopicFilter) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case messages := <-topicFilter.Updates():
+			for _, msg := range messages {
+				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", msg.Topic, msg.Payload)
+			}
+		}
+	}
+}
+
 func main() {
-	topic := flag.String("topic", "DDcBReFJBDFKe/groups.private.673651407196578720.message", "The topic name to/from which to publish/subscribe")
+	topic := flag.String("topic", "groups.private.673651407196578720.message", "The topic name to/from which to publish/subscribe")
 	server := flag.String("server", "grpc://localhost:6080", "The server URI. ex: grpc://127.0.0.1:6080")
 	password := flag.String("password", "", "The password (optional)")
 	user := flag.String("user", "", "The User (optional)")
@@ -61,22 +73,17 @@ func main() {
 	if *action == "keygen" {
 		recv := make(chan [2][]byte)
 
-		client, err := unitdb.NewClient(
+		client, err := udb.NewClient(
 			*server,
 			*id,
-			// unitdb.WithInsecure(),
-			unitdb.WithUserNamePassword(*user, []byte(*password)),
-			unitdb.WithCleanSession(),
-			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
+			// udb.WithInsecure(),
+			udb.WithUserNamePassword(*user, []byte(*password)),
+			udb.WithCleanSession(),
+			udb.WithConnectionLostHandler(func(client udb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
-			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
-				for _, msg := range pubMsg.Messages() {
-					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
-				}
 			}),
 		)
 		if err != nil {
@@ -120,27 +127,22 @@ func main() {
 	if *action == "sub" {
 		recv := make(chan [2][]byte)
 
-		client, err := unitdb.NewClient(
+		client, err := udb.NewClient(
 			*server,
 			*id,
-			// unitdb.WithInsecure(),
-			unitdb.WithSessionKey(2339641922),
-			unitdb.WithUserNamePassword(*user, []byte(*password)),
-			// unitdb.WithCleanSession(),
-			unitdb.WithKeepAlive(2*time.Second),
-			unitdb.WithPingTimeout(1*time.Second),
-			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
+			udb.WithInsecure(),
+			// udb.WithSessionKey(2339641922),
+			udb.WithUserNamePassword(*user, []byte(*password)),
+			// udb.WithCleanSession(),
+			udb.WithKeepAlive(2*time.Second),
+			udb.WithPingTimeout(1*time.Second),
+			udb.WithConnectionLostHandler(func(client udb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
-				for _, msg := range pubMsg.Messages() {
-					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
-				}
-			}),
-			unitdb.WithBatchDuration(10*time.Second),
+			udb.WithBatchDuration(10*time.Second),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -150,38 +152,47 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Subscribe(*topic, unitdb.WithSubDeliveryMode(1) /*, unitdb.WithSubDelay(1*time.Second)*/)
+
+		topicFilter, err := client.TopicFilter(*topic)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		go messageHandler(ctx, topicFilter)
+
+		r := client.Subscribe(*topic, udb.WithSubDeliveryMode(1) /*, udb.WithSubDelay(1*time.Second)*/)
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 
-		for {
-			select {
-			case <-ctx.Done():
-				client.DisconnectContext(ctx)
-				fmt.Println("Subscriber Disconnected")
-				return
-			case incoming := <-recv:
-				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", incoming[0], incoming[1])
-			}
+		wait := time.NewTicker(30 * time.Second)
+		<-wait.C
+		r = client.Unsubscribe(*topic)
+		if _, err := r.Get(ctx, 1*time.Second); err != nil {
+			fmt.Println(err)
+			os.Exit(1)
 		}
+		wait.Stop()
+		client.DisconnectContext(ctx)
+
 	}
 
 	if *action == "pub" {
 
-		client, err := unitdb.NewClient(
+		client, err := udb.NewClient(
 			*server,
 			*id,
-			// unitdb.WithInsecure(),
-			// unitdb.WithSessionKey(2339641921),
-			unitdb.WithUserNamePassword(*user, []byte(*password)),
-			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
+			udb.WithInsecure(),
+			// udb.WithSessionKey(2339641921),
+			udb.WithUserNamePassword(*user, []byte(*password)),
+			udb.WithConnectionLostHandler(func(client udb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 			}),
-			// unitdb.WithCleanSession(),
+			// udb.WithCleanSession(),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -193,7 +204,7 @@ func main() {
 		}
 		fmt.Println("Publisher Started")
 		for i := 0; i < *num; i++ {
-			r := client.Publish(*topic, []byte(*payload), unitdb.WithPubDeliveryMode(1))
+			r := client.Publish(*topic, []byte(*payload), udb.WithPubDeliveryMode(1))
 			if _, err := r.Get(ctx, 1*time.Second); err != nil {
 				log.Fatalf("err: %s", err)
 			}
@@ -206,27 +217,22 @@ func main() {
 	} else {
 		recv := make(chan [2][]byte)
 
-		client, err := unitdb.NewClient(
+		client, err := udb.NewClient(
 			*server,
 			*id,
-			// unitdb.WithInsecure(),
-			unitdb.WithSessionKey(2339641922),
-			unitdb.WithUserNamePassword(*user, []byte(*password)),
-			// unitdb.WithCleanSession(),
-			unitdb.WithKeepAlive(2*time.Second),
-			unitdb.WithPingTimeout(1*time.Second),
-			unitdb.WithConnectionLostHandler(func(client unitdb.Client, err error) {
+			udb.WithInsecure(),
+			// udb.WithSessionKey(2339641922),
+			udb.WithUserNamePassword(*user, []byte(*password)),
+			// udb.WithCleanSession(),
+			udb.WithKeepAlive(2*time.Second),
+			udb.WithPingTimeout(1*time.Second),
+			udb.WithConnectionLostHandler(func(client udb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
 				close(recv)
 			}),
-			unitdb.WithDefaultMessageHandler(func(client unitdb.Client, pubMsg unitdb.PubMessage) {
-				for _, msg := range pubMsg.Messages() {
-					recv <- [2][]byte{[]byte(msg.Topic), msg.Payload}
-				}
-			}),
-			unitdb.WithBatchDuration(10*time.Second),
+			udb.WithBatchDuration(10*time.Second),
 		)
 		if err != nil {
 			log.Fatalf("err: %s", err)
@@ -236,24 +242,24 @@ func main() {
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		r := client.Relay([]string{*topic}, unitdb.WithLast("1m"))
+
+		topicFilter, err := client.TopicFilter(*topic)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+
+		go messageHandler(ctx, topicFilter)
+
+		r := client.Relay([]string{*topic}, udb.WithLast("1m"))
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
 
-		for {
-			select {
-			case <-ctx.Done():
-				client.DisconnectContext(ctx)
-				fmt.Println("Client Disconnected")
-				return
-			case incoming := <-recv:
-				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", incoming[0], incoming[1])
-				client.DisconnectContext(ctx)
-				fmt.Println("Client Disconnected")
-				return
-			}
-		}
+		wait := time.NewTicker(30 * time.Second)
+		<-wait.C
+		wait.Stop()
+		client.DisconnectContext(ctx)
 	}
 }

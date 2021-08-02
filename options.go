@@ -17,11 +17,6 @@ const (
 	maxPubCount = 1000
 )
 
-// MessageHandler is a callback type which can be set to be
-// executed upon the arrival of messages published to topics
-// to which the client is subscribed.
-type MessageHandler func(Client, PubMessage)
-
 // ConnectionHandler is a callback that is called when connection to the server is established.
 type ConnectionHandler func(Client)
 
@@ -44,7 +39,6 @@ type options struct {
 	storePath               string
 	storeSize               int
 	storeLogReleaseDuration time.Duration
-	defaultMessageHandler   MessageHandler
 	connectionHandler       ConnectionHandler
 	connectionLostHandler   ConnectionLostHandler
 	writeTimeout            time.Duration
@@ -250,14 +244,6 @@ func WithStoreLogReleaseDuration(dur time.Duration) Options {
 	})
 }
 
-// WithDefaultMessageHandler sets default message handler to be called
-// on message receive to all topics client has subscribed to.
-func WithDefaultMessageHandler(defaultHandler MessageHandler) Options {
-	return newFuncOption(func(o *options) {
-		o.defaultMessageHandler = defaultHandler
-	})
-}
-
 // WithConnectionHandler sets handler function to be called when client is connected.
 func WithConnectionHandler(handler ConnectionHandler) Options {
 	return newFuncOption(func(o *options) {
@@ -370,8 +356,7 @@ func WithTTL(ttl string) PubOptions {
 
 // -------------------------------------------------------------
 type relOptions struct {
-	last     string
-	callback MessageHandler
+	last string
 }
 
 // Re;Options it contains configurable options for Subscribe
@@ -402,18 +387,9 @@ func WithLast(last string) RelOptions {
 	})
 }
 
-// WithRelayCallback sets handler function to be called
-// upon receiving published message for topic client has requested to relay.
-func WithRelayCallback(handler MessageHandler) RelOptions {
-	return newFuncRelOption(func(o *relOptions) {
-		o.callback = handler
-	})
-}
-
 // -------------------------------------------------------------
 type subOptions struct {
 	pubSubOptions
-	callback MessageHandler
 }
 
 // SubOptions it contains configurable options for Subscribe
@@ -452,13 +428,5 @@ func WithSubDeliveryMode(deliveryMode uint8) SubOptions {
 func WithSubDelay(delay time.Duration) SubOptions {
 	return newFuncSubOption(func(o *subOptions) {
 		o.delay = int32(delay.Milliseconds())
-	})
-}
-
-// WithCallback sets handler function to be called
-// upon receiving published message for topic client has Subscribed to.
-func WithCallback(handler MessageHandler) SubOptions {
-	return newFuncSubOption(func(o *subOptions) {
-		o.callback = handler
 	})
 }

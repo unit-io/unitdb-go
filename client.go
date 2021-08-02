@@ -36,6 +36,8 @@ type Client interface {
 	// the client wait group is done.
 	// The context used grpc stream to signal context done.
 	DisconnectContext(ctx context.Context) error
+	// TopicFilter is used to receive filtered messages on specififc topic.
+	TopicFilter(subTopic string) (*TopicFilter, error)
 	// Publish will publish a message with the specified DeliveryMode and content
 	// to the specified topic.
 	Publish(topic string, payload []byte, pubOpts ...PubOptions) Result
@@ -54,6 +56,7 @@ type Client interface {
 	// received.
 	Unsubscribe(topics ...string) Result
 }
+
 type client struct {
 	opts       *options
 	context    context.Context    // context for the client
@@ -66,7 +69,7 @@ type client struct {
 	send       chan *MessageAndResult
 	recv       chan lp.MessagePack
 	pub        chan *utp.Publish
-	callbacks  map[uint64]MessageHandler
+	notifier   *notifier
 
 	// Time when the keepalive session was last refreshed.
 	lastTouched atomic.Value
@@ -88,11 +91,11 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 		opts:       new(options),
 		context:    ctx,
 		cancel:     cancel,
-		messageIds: messageIds{index: make(map[MID]Result)},
+		messageIds: messageIds{index: make(map[MID]Result), resumedIds: make(map[MID]struct{})},
 		send:       make(chan *MessageAndResult, 1), // buffered
 		recv:       make(chan lp.MessagePack),
 		pub:        make(chan *utp.Publish),
-		callbacks:  make(map[uint64]MessageHandler),
+		notifier:   newNotifier(100), // Notifier with Queue size 100
 		// close
 		closeC: make(chan struct{}),
 	}
@@ -103,7 +106,6 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 	// set default options
 	c.opts.addServer(target)
 	c.opts.setClientID(clientID)
-	c.callbacks[0] = c.opts.defaultMessageHandler
 
 	// Open database connection
 	path := c.opts.storePath
@@ -150,6 +152,7 @@ func (c *client) close() error {
 	// close(c.ack)
 	close(c.recv)
 	close(c.pub)
+	c.notifier.close()
 	store.Close()
 	if c.cancel != nil {
 		c.cancel()
@@ -315,6 +318,21 @@ func (c *client) serverDisconnect(err error) {
 	}
 }
 
+func (c *client) TopicFilter(subscriptionTopic string) (*TopicFilter, error) {
+	topic := new(topic)
+	topic.parse(subscriptionTopic)
+	if err := topic.validate(validateMinLength,
+		validateMaxLenth,
+		validateMaxDepth,
+		validateTopicParts); err != nil {
+		return nil, err
+	}
+	t := &TopicFilter{subscriptionTopic: topic, updates: make(chan []PubMessage)}
+	c.notifier.addFilter(t.filter)
+
+	return t, nil
+}
+
 // Publish will publish a message with the specified DeliveryMode and content
 // to the specified topic.
 func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions) Result {
@@ -337,6 +355,13 @@ func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions)
 	// parse the topic.
 	if ok := t.parse(pubTopic); !ok {
 		r.setError(errors.New("publish: unable to parse topic"))
+		return r
+	}
+
+	if err := t.validate(validateMinLength,
+		validateMaxLenth,
+		validateMaxDepth); err != nil {
+		r.setError(err)
 		return r
 	}
 
@@ -419,6 +444,15 @@ func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 			return r
 		}
 
+		if err := t.validate(validateMinLength,
+			validateMaxLenth,
+			validateMaxDepth,
+			validateMultiWildcard,
+			validateTopicParts); err != nil {
+			r.setError(err)
+			return r
+		}
+
 		if dur, ok := t.getOption("last"); ok {
 			last = dur
 		}
@@ -472,6 +506,15 @@ func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 	// parse the topic.
 	if ok := t.parse(subTopic); !ok {
 		r.setError(errors.New("subscribe: unable to parse topic"))
+		return r
+	}
+
+	if err := t.validate(validateMinLength,
+		validateMaxLenth,
+		validateMaxDepth,
+		validateMultiWildcard,
+		validateTopicParts); err != nil {
+		r.setError(err)
 		return r
 	}
 
@@ -537,6 +580,15 @@ func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Resul
 		// parse the topic.
 		if ok := t.parse(subTopic); !ok {
 			r.setError(errors.New("SubscribeMultiple: unable to parse topic"))
+			return r
+		}
+
+		if err := t.validate(validateMinLength,
+			validateMaxLenth,
+			validateMaxDepth,
+			validateMultiWildcard,
+			validateTopicParts); err != nil {
+			r.setError(err)
 			return r
 		}
 
@@ -725,7 +777,7 @@ func (c *client) isClosed() bool {
 // Check read ok status.
 func (c *client) ok() error {
 	if c.isClosed() {
-		return errors.New("client connection is closed.")
+		return errors.New("client connection is closed")
 	}
 	return nil
 }
