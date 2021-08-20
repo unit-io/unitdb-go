@@ -327,7 +327,7 @@ func (c *client) TopicFilter(subscriptionTopic string) (*TopicFilter, error) {
 		validateTopicParts); err != nil {
 		return nil, err
 	}
-	t := &TopicFilter{subscriptionTopic: topic, updates: make(chan []PubMessage)}
+	t := &TopicFilter{subscriptionTopic: topic, updates: make(chan []*PubMessage)}
 	c.notifier.addFilter(t.filter)
 
 	return t, nil

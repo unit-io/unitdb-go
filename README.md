@@ -16,7 +16,7 @@ Make use of the client by importing it in your Go client source code. For exampl
 
 import "github.com/unit-io/unitdb-go"
 
-Samples are available in the cmd directory for reference. To build unitdb server from latest source code use "replace" in go.mod to point to your local module.
+Samples are available in the examples directory for reference. To build unitdb server from latest source code use "replace" in go.mod to point to your local module.
 
 ```golang
 go mod edit -replace github.com/unit-io/unitdb=$GOPATH/src/github.com/unit-io/unitdb

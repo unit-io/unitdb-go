@@ -13,7 +13,7 @@ import (
 type Message interface {
 	DeliveryMode() uint8
 	MessageID() uint16
-	Messages() []PubMessage
+	Messages() []*PubMessage
 	Ack()
 }
 
@@ -25,7 +25,7 @@ type PubMessage struct {
 type message struct {
 	deliveryMode uint8
 	messageID    uint16
-	messages     []PubMessage
+	messages     []*PubMessage
 	once         sync.Once
 	ack          func()
 }
@@ -38,7 +38,7 @@ func (m *message) MessageID() uint16 {
 	return m.messageID
 }
 
-func (m *message) Messages() []PubMessage {
+func (m *message) Messages() []*PubMessage {
 	return m.messages
 }
 
@@ -47,9 +47,9 @@ func (m *message) Ack() {
 }
 
 func messageFromPublish(p *utp.Publish, ack func()) *message {
-	var messages []PubMessage
+	var messages []*PubMessage
 	for _, pubMsg := range p.Messages {
-		msg := PubMessage{
+		msg := &PubMessage{
 			Topic:   pubMsg.Topic,
 			Payload: pubMsg.Payload,
 		}

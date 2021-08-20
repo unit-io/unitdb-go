@@ -30,7 +30,7 @@ const (
 type filter func(notice *Notice) error
 
 type Notice struct {
-	messages []PubMessage
+	messages []*PubMessage
 }
 
 // func (n *Notice) Messages() []PubMessage {
@@ -85,7 +85,7 @@ func (n *notifier) hasObservers() bool {
 	return len(n.filters) > 0
 }
 
-func (n *notifier) notify(messages []PubMessage) {
+func (n *notifier) notify(messages []*PubMessage) {
 	if !n.hasObservers() {
 		return
 	}

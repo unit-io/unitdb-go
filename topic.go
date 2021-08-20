@@ -52,11 +52,11 @@ type (
 	}
 	TopicFilter struct {
 		subscriptionTopic *topic
-		updates           chan []PubMessage
+		updates           chan []*PubMessage
 	}
 )
 
-func (t *TopicFilter) Updates() <-chan []PubMessage {
+func (t *TopicFilter) Updates() <-chan []*PubMessage {
 	return t.updates
 }
 
@@ -226,8 +226,7 @@ func validateTopicParts(t *topic) error {
 }
 
 func (t *TopicFilter) filter(notice *Notice) error {
-	fmt.Println("filter: message count", len(notice.messages))
-	messages := make([]PubMessage, 0)
+	messages := make([]*PubMessage, 0)
 
 	for _, pubMsg := range notice.messages {
 		pubTopic := new(topic)
@@ -246,13 +245,11 @@ func (t *TopicFilter) filter(notice *Notice) error {
 		}
 
 		if t.subscriptionTopic.matches(pubTopic) {
-			fmt.Println("matches: subTopic, pubTopic ", t.subscriptionTopic.topic, pubTopic.topic)
 			messages = append(messages, notice.messages...)
 		}
 	}
 
 	if len(messages) > 0 {
-		fmt.Println("filtered: message count", len(messages))
 		t.updates <- messages
 	}
 
