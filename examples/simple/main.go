@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	udb "github.com/unit-io/unitdb-go"
 )
 
+var (
+	closeW sync.WaitGroup
+)
+
 var messageHandler = func(ctx context.Context, topicFilter *udb.TopicFilter) {
+	defer closeW.Done()
 	for {
 		select {
 		case <-ctx.Done():
@@ -27,19 +33,42 @@ func main() {
 	client, err := udb.NewClient(
 		//"tcp://localhost:6060",
 		// "ws://localhost:6080",
-		"grpc://localhost:6080",
+		"grpc://localhost:6081",
 		"UCBFDONCNJLaKMCAIeJBaOVfbAXUZHNPLDKKLDKLHZHKYIZLCDPQ",
+		udb.AddServer("grpc://localhost:6080"),
+		udb.WithConnectTimeout(30*time.Second),
 		udb.WithCleanSession(),
 		udb.WithInsecure(),
 		udb.WithBatchDuration(1*time.Second),
-		udb.WithKeepAlive(2*time.Second),
-		udb.WithPingTimeout(1*time.Second),
+		udb.WithKeepAlive(30*time.Second),
+		udb.WithPingTimeout(10*time.Second),
+		udb.WithConnectionLostHandler(func(client udb.Client, err error) {
+			if err != nil {
+				log.Fatal(err)
+			}
+		}),
 	)
 	if err != nil {
 		log.Fatalf("err: %s", err)
 	}
 	ctx := context.Background()
-	err = client.ConnectContext(ctx)
+
+	// Client connection with retry
+	err = func(retry int) error {
+		r := 0
+		for range time.Tick(100 * time.Millisecond) {
+			r++
+			err = client.ConnectContext(ctx)
+			if err == nil {
+				return nil
+			}
+			if r >= retry {
+				return err
+			}
+			fmt.Println("client connection retry #", r)
+		}
+		return nil
+	}(3)
 	if err != nil {
 		log.Fatalf("err: %s", err)
 	}
@@ -52,6 +81,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	closeW.Add(1)
 	go messageHandler(ctx, privateGroupFilter)
 
 	r = client.Relay([]string{"groups.private.673651407196578720.message"}, udb.WithLast("10m"))
@@ -74,7 +104,7 @@ func main() {
 		}
 	}
 
-	wait := time.NewTicker(5 * time.Second)
+	wait := time.NewTicker(3 * time.Second)
 	<-wait.C
 	r = client.Unsubscribe("groups.private.673651407196578720.message")
 	if _, err := r.Get(ctx, 1*time.Second); err != nil {

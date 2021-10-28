@@ -141,7 +141,9 @@ func (c *client) close() error {
 		return errors.New("error disconnecting client")
 	}
 
-	c.batchManager.close()
+	if c.cancel != nil {
+		c.cancel()
+	}
 
 	// Signal all goroutines.
 	close(c.closeC)
@@ -152,11 +154,12 @@ func (c *client) close() error {
 	// close(c.ack)
 	close(c.recv)
 	close(c.pub)
+
+	c.batchManager.close()
+
 	c.notifier.close()
 	store.Close()
-	if c.cancel != nil {
-		c.cancel()
-	}
+
 	return nil
 }
 
@@ -173,7 +176,8 @@ func (c *client) ConnectContext(ctx context.Context) error {
 		return errors.New("no servers defined to connect to")
 	}
 
-	ctx, c.cancel = context.WithCancel(ctx)
+	ctx, c.cancel = context.WithTimeout(ctx, c.opts.connectTimeout)
+
 	if err := c.attemptConnection(ctx); err != nil {
 		return err
 	}
@@ -227,7 +231,8 @@ func (c *client) attemptConnection(ctx context.Context) (err error) {
 	for _, uri := range c.opts.servers {
 		switch uri.Scheme {
 		case "grpc", "ws":
-			conn, err := grpc.Dial(
+			conn, err := grpc.DialContext(
+				ctx,
 				uri.Host,
 				grpc.WithBlock(),
 				grpc.WithInsecure(),
@@ -300,21 +305,21 @@ func (c *client) internalConnLost(err error) {
 	// It is possible that internalConnLost will be called multiple times simultaneously
 	// (including after sending a DisconnectMessage) as such we only do cleanup etc if the
 	// routines were actually running and are not being disconnected at users request
-	defer c.close()
 	if err := c.ok(); err == nil {
 		if c.opts.connectionLostHandler != nil {
 			go c.opts.connectionLostHandler(c, err)
 		}
+		c.close()
 	}
 }
 
 // serverDisconnect cleanup when server send disconnect request or an error occurs.
 func (c *client) serverDisconnect(err error) {
-	defer c.close()
 	if err := c.ok(); err == nil {
 		if c.opts.connectionLostHandler != nil {
 			go c.opts.connectionLostHandler(c, err)
 		}
+		c.close()
 	}
 }
 
@@ -338,7 +343,7 @@ func (c *client) TopicFilter(subscriptionTopic string) (*TopicFilter, error) {
 func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions) Result {
 	r := &PublishResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
-		r.setError(errors.New("error not connected"))
+		r.setError(err)
 		return r
 	}
 
@@ -423,7 +428,7 @@ func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions)
 func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 	r := &RelayResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
-		r.setError(errors.New("error not connected"))
+		r.setError(err)
 		return r
 	}
 
@@ -488,7 +493,7 @@ func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
-		r.setError(errors.New("error not connected"))
+		r.setError(err)
 		return r
 	}
 
@@ -562,7 +567,7 @@ func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Result {
 	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 	if err := c.ok(); err != nil {
-		r.setError(errors.New("error not connected"))
+		r.setError(err)
 		return r
 	}
 
@@ -636,8 +641,11 @@ func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Resul
 // Messages published to those topics from other clients will no longer be
 // received.
 func (c *client) Unsubscribe(topics ...string) Result {
-	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
-
+	r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
+	if err := c.ok(); err != nil {
+		r.setError(err)
+		return r
+	}
 	unsubMsg := &utp.Unsubscribe{}
 	var subs []*utp.Subscription
 	for _, topic := range topics {

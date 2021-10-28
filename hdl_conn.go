@@ -2,10 +2,10 @@ package unitdb
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"time"
 
@@ -19,7 +19,6 @@ import (
 func Connect(conn net.Conn, cm *utp.Connect) (rc uint8, epoch int32, cid int32, err error) {
 	m, err := lp.Encode(cm)
 	if err != nil {
-		fmt.Println(err)
 		return utp.ErrRefusedServerUnavailable, 0, 0, err
 	}
 	if _, err := conn.Write(m.Bytes()); err != nil {
@@ -53,10 +52,10 @@ func verifyCONNACK(conn net.Conn) (uint8, int32, int32, error) {
 }
 
 // Handle handles incoming messages
-func (c *client) readLoop(ctx context.Context) error {
+func (c *client) readLoop(ctx context.Context) (err error) {
+	var msg lp.MessagePack
 	defer func() {
-		log.Println("conn.readLoop: closing...")
-		// c.closeW.Done()
+		c.internalConnLost(err)
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
@@ -71,7 +70,7 @@ func (c *client) readLoop(ctx context.Context) error {
 			return nil
 		default:
 			// Unpack an incoming Message
-			msg, err := lp.Read(reader)
+			msg, err = lp.Read(reader)
 			if err != nil {
 				return err
 			}
@@ -128,8 +127,10 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 	return nil
 }
 
-func (c *client) writeLoop(ctx context.Context) {
-	// defer c.closeW.Done()
+func (c *client) writeLoop(ctx context.Context) (err error) {
+	var buf bytes.Buffer
+
+	defer c.internalConnLost(err)
 	for {
 		select {
 		case <-ctx.Done():
@@ -147,18 +148,18 @@ func (c *client) writeLoop(ctx context.Context) {
 				mId := c.inboundID(msg.MessageID)
 				c.freeID(mId)
 			}
-			buf, err := lp.Encode(outMsg.m)
+			buf, err = lp.Encode(outMsg.m)
 			if err != nil {
-				fmt.Println(err)
-				// return
+				return err
 			}
 			c.conn.Write(buf.Bytes())
 		}
 	}
 }
 
-func (c *client) dispatcher(ctx context.Context) {
-	// defer c.closeW.Done()
+func (c *client) dispatcher(ctx context.Context) (err error) {
+	defer c.internalConnLost(err)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -206,10 +207,12 @@ func (c *client) keepalive(ctx context.Context) {
 		case <-pingTicker.C:
 			lastAction := c.lastAction.Load().(time.Time)
 			lastTouched := c.lastTouched.Load().(time.Time)
-			live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int32(time.Second)))
+			// live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int32(time.Second)))
+			liveDuration := time.Duration(c.opts.keepAlive * int32(time.Second))
 			timeout := TimeNow().Add(-c.opts.pingTimeout)
 
-			if lastAction.After(live) || lastTouched.After(live) {
+			// if lastAction.After(live) || lastTouched.After(live) {
+			if time.Since(lastAction) >= liveDuration || time.Since(lastTouched) >= liveDuration {
 				ping := &utp.Pingreq{}
 				m, err := lp.Encode(ping)
 				if err != nil {
@@ -220,6 +223,7 @@ func (c *client) keepalive(ctx context.Context) {
 				pingSent = TimeNow()
 			}
 			if lastTouched.Before(timeout) && pingSent.Before(timeout) {
+				fmt.Println("keepalive error")
 				go c.internalConnLost(errors.New("pingresp not received, disconnecting")) // no harm in calling this if the connection is already down (better than stopping!)
 				return
 			}
