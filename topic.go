@@ -44,6 +44,8 @@ type topicOption struct {
 // topic represents a parsed topic.
 type (
 	topic struct {
+		key          string // The key of a "key/topic" string, if any.
+		name         string // The topic as given, without key and options.
 		topic        string // Gets or sets the topic string.
 		parts        []string
 		topicOptions string
@@ -128,6 +130,7 @@ func (t *topic) parse(text string) (ok bool) {
 
 	t.topic = parts[0]
 	if len(parts) > 1 {
+		t.key = parts[0]
 		t.topic = parts[1]
 	}
 
@@ -141,6 +144,7 @@ func (t *topic) parse(text string) (ok bool) {
 		t.topicOptions = parts[1]
 	}
 	t.topic = parts[0]
+	t.name = t.topic
 
 	ok = t.parseOptions(t.topicOptions)
 
@@ -162,6 +166,16 @@ func (t *topic) parse(text string) (ok bool) {
 	}
 
 	return true
+}
+
+// wire returns the topic to send to the server: the topic as given, with its
+// key if any, and without the options, which the client sends as message
+// fields. Unlike t.topic it keeps a trailing multi wildcard.
+func (t *topic) wire() string {
+	if t.key == "" {
+		return t.name
+	}
+	return t.key + string(TopicKeySeparator) + t.name
 }
 
 func (t *topic) validate(fn ...func(t *topic) error) error {
@@ -245,7 +259,7 @@ func (t *TopicFilter) filter(notice *Notice) error {
 		}
 
 		if t.subscriptionTopic.matches(pubTopic) {
-			messages = append(messages, notice.messages...)
+			messages = append(messages, pubMsg)
 		}
 	}
 

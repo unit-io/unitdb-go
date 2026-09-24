@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"log"
+	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -64,12 +65,13 @@ type client struct {
 	messageIds                    // local identifier of messages
 	connID     int32              // The unique id of the connection.
 	sessID     uint32
-	epoch      uint32   // The session ID of the connection.
-	conn       net.Conn // the network connection
-	send       chan *MessageAndResult
-	recv       chan lp.MessagePack
-	pub        chan *utp.Publish
-	notifier   *notifier
+	// readIdleTimeout is the read deadline of the connection, see readIdleTimeout.
+	readIdleTimeout time.Duration
+	epoch           uint32   // The session ID of the connection.
+	conn            net.Conn // the network connection
+	send            chan *MessageAndResult
+	pub             chan *utp.Publish
+	notifier        *notifier
 
 	// Time when the keepalive session was last refreshed.
 	lastTouched atomic.Value
@@ -93,7 +95,6 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 		cancel:     cancel,
 		messageIds: messageIds{index: make(map[MID]Result), resumedIds: make(map[MID]struct{})},
 		send:       make(chan *MessageAndResult, 1), // buffered
-		recv:       make(chan lp.MessagePack),
 		pub:        make(chan *utp.Publish),
 		notifier:   newNotifier(100), // Notifier with Queue size 100
 		// close
@@ -108,15 +109,20 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 	c.opts.setClientID(clientID)
 
 	// Open database connection
-	path := c.opts.storePath
-	if clientID != "" {
-		path = path + "/" + clientID
-	}
-	if err := store.Open(path, int64(c.opts.storeSize), false); err != nil {
+	if err := c.openStore(); err != nil {
 		return nil, err
 	}
 
 	return c, nil
+}
+
+// openStore opens the client's message store.
+func (c *client) openStore() error {
+	path := c.opts.storePath
+	if c.opts.clientID != "" {
+		path = path + "/" + c.opts.clientID
+	}
+	return store.Open(path, int64(c.opts.storeSize), false)
 }
 
 func StreamConn(
@@ -134,8 +140,23 @@ func StreamConn(
 	}
 }
 
+// grpcConn is a connection over a grpc stream that owns its grpc client
+// connection: closing the stream alone would leave the client connection and
+// its goroutines running.
+type grpcConn struct {
+	*common.Conn
+	cc *grpc.ClientConn
+}
+
+func (c *grpcConn) Close() error {
+	c.Conn.Close()
+	return c.cc.Close()
+}
+
 func (c *client) close() error {
-	defer c.conn.Close()
+	if c.conn != nil {
+		defer c.conn.Close()
+	}
 
 	if !c.setClosed() {
 		return errors.New("error disconnecting client")
@@ -150,10 +171,8 @@ func (c *client) close() error {
 
 	// Wait for all goroutines to exit.
 	c.closeW.Wait()
-	close(c.send)
-	// close(c.ack)
-	close(c.recv)
-	close(c.pub)
+	// The send and pub channels are left open: goroutines that may still
+	// send on them give up on closeC instead.
 
 	c.batchManager.close()
 
@@ -176,10 +195,53 @@ func (c *client) ConnectContext(ctx context.Context) error {
 		return errors.New("no servers defined to connect to")
 	}
 
-	ctx, c.cancel = context.WithTimeout(ctx, c.opts.connectTimeout)
+	// A failed connect closes the store, so open it again on a retry.
+	if !store.IsOpen() {
+		if err := c.openStore(); err != nil {
+			return err
+		}
+	}
 
+	c.readIdleTimeout = readIdleTimeout
+
+	// ctx bounds the whole connection; the connect timeout only bounds dialing.
+	ctx, cancel := context.WithCancel(ctx)
 	if err := c.attemptConnection(ctx); err != nil {
+		cancel()
+		// Release the process wide store so that a new client can be created.
+		store.Close()
 		return err
+	}
+	clientCancel := c.cancel
+	c.cancel = func() {
+		cancel()
+		if clientCancel != nil {
+			clientCancel()
+		}
+	}
+
+	// Resolve the session before the loops start, so that every message of
+	// this connection is logged under it.
+	var sessKey uint32
+	if c.opts.sessionKey != 0 {
+		sessKey = c.opts.sessionKey
+	} else {
+		sessKey = c.epoch
+	}
+	resume := false
+	if rawSess, err := store.Session.Get(uint64(sessKey)); err == nil && len(rawSess) >= 4 {
+		c.sessID = binary.LittleEndian.Uint32(rawSess[:4])
+		if c.opts.cleanSession {
+			store.Log.Reset(c.sessID)
+		} else {
+			resume = true
+		}
+	}
+	rawSess := make([]byte, 4)
+	binary.LittleEndian.PutUint32(rawSess[0:4], c.sessID)
+	store.Session.Put(uint64(sessKey), rawSess)
+	if c.epoch != sessKey {
+		store.Session.Put(uint64(c.epoch), rawSess)
 	}
 
 	// batch manager
@@ -199,85 +261,78 @@ func (c *client) ConnectContext(ctx context.Context) error {
 	go c.writeLoop(ctx)  // send messages to servers
 	go c.dispatcher(ctx) // dispatch messages to client
 
-	// Take care of any messages in the store
-	var sessKey uint32
-	if c.opts.sessionKey != 0 {
-		sessKey = c.opts.sessionKey
-	} else {
-		sessKey = c.epoch
-	}
-
-	sessID := c.connID
-	if rawSess, err := store.Session.Get(uint64(sessKey)); err == nil {
-		sessID := binary.LittleEndian.Uint32(rawSess[:4])
-		if !c.opts.cleanSession {
-			c.resume(sessID, c.opts.resumeSubs)
-		} else {
-			store.Log.Reset(sessID)
-		}
-		c.sessID = sessID
-	}
-	rawSess := make([]byte, 4)
-	binary.LittleEndian.PutUint32(rawSess[0:4], uint32(sessID))
-	store.Session.Put(uint64(sessKey), rawSess)
-	if c.epoch != sessKey {
-		store.Session.Put(uint64(c.epoch), rawSess)
+	// Resend what the session left unfinished, now that the loops run.
+	if resume {
+		c.resume(c.sessID, c.opts.resumeSubs)
 	}
 
 	return nil
 }
 
-func (c *client) attemptConnection(ctx context.Context) (err error) {
+// attemptConnection connects to the first server that accepts the connection.
+func (c *client) attemptConnection(ctx context.Context) error {
+	var err error
 	for _, uri := range c.opts.servers {
-		switch uri.Scheme {
-		case "grpc", "ws":
-			conn, err := grpc.DialContext(
-				ctx,
-				uri.Host,
-				grpc.WithBlock(),
-				grpc.WithInsecure(),
-				grpc.WithTimeout(c.opts.connectTimeout),
-			)
-			if err != nil {
-				return err
-			}
-
-			// Connect to grpc stream
-			stream, err := pbx.NewUnitdbClient(conn).Stream(ctx)
-			if err != nil {
-				log.Fatal(err)
-			}
-			c.conn = StreamConn(stream)
-		case "tcp":
-			conn, err := net.DialTimeout("tcp", uri.Host, c.opts.connectTimeout)
-			if err != nil {
-				return err
-			}
-			c.conn = conn
-		case "unix":
-			conn, err := net.DialTimeout("unix", uri.Host, c.opts.connectTimeout)
-			if err != nil {
-				return err
-			}
-			c.conn = conn
+		var conn net.Conn
+		if conn, err = c.dial(ctx, uri); err != nil {
+			continue
 		}
 
 		// get Connect message from options.
 		cm := newConnectMsgFromOptions(c.opts, uri)
-		rc, epoch, connId, err1 := Connect(c.conn, cm)
-		if rc == utp.Accepted {
+		rc, epoch, connID, cerr := Connect(conn, cm)
+		if cerr == nil && rc == utp.Accepted {
+			c.conn = conn
 			c.epoch = uint32(epoch)
-			c.connID = connId
-			c.sessID = uint32(connId)
+			c.connID = connID
+			c.sessID = uint32(connID)
 			c.messageIds.reset(MID(c.connID))
-			break // successfully connected
+			return nil
 		}
-		if c.conn != nil {
-			c.DisconnectContext(ctx)
+		conn.Close()
+		if cerr != nil {
+			err = cerr
+		} else {
+			err = fmt.Errorf("connection to %s refused, return code %d", uri.Host, rc)
 		}
-		err = err1
 	}
 	return err
+}
+
+// dial opens a network connection to the server. ctx bounds the life of a
+// grpc stream; the connect timeout bounds dialing.
+func (c *client) dial(ctx context.Context, uri *url.URL) (net.Conn, error) {
+	switch uri.Scheme {
+	case "grpc", "ws":
+		dialCtx, dialCancel := ctx, context.CancelFunc(func() {})
+		if c.opts.connectTimeout > 0 {
+			dialCtx, dialCancel = context.WithTimeout(ctx, c.opts.connectTimeout)
+		}
+		conn, err := grpc.DialContext(
+			dialCtx,
+			uri.Host,
+			grpc.WithBlock(),
+			grpc.WithInsecure(),
+			// A frame of the largest size the server accepts, with its headers.
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(lp.MaxFrameSize+1<<10)),
+		)
+		dialCancel()
+		if err != nil {
+			return nil, err
+		}
+
+		// Connect to grpc stream. The stream lives as long as the connection.
+		stream, err := pbx.NewUnitdbClient(conn).Stream(ctx)
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return &grpcConn{Conn: StreamConn(stream), cc: conn}, nil
+	case "tcp", "unix":
+		return net.DialTimeout(uri.Scheme, uri.Host, c.opts.connectTimeout)
+	default:
+		return nil, fmt.Errorf("unsupported server scheme %q", uri.Scheme)
+	}
 }
 
 // Disconnect will disconnect the connection to the server
@@ -292,10 +347,17 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 		return nil
 	}
 
+	// A client that never connected has nothing to tell the server.
+	if c.conn == nil {
+		return c.close()
+	}
+
 	defer c.close()
 	m := &utp.Disconnect{}
 	r := &DisconnectResult{result: result{complete: make(chan struct{})}}
-	c.send <- &MessageAndResult{m: m, r: r}
+	if !c.sendMessage(&MessageAndResult{m: m, r: r}) {
+		return nil
+	}
 	_, err := r.Get(ctx, c.opts.writeTimeout)
 	return err
 }
@@ -305,7 +367,7 @@ func (c *client) internalConnLost(err error) {
 	// It is possible that internalConnLost will be called multiple times simultaneously
 	// (including after sending a DisconnectMessage) as such we only do cleanup etc if the
 	// routines were actually running and are not being disconnected at users request
-	if err := c.ok(); err == nil {
+	if c.ok() == nil {
 		if c.opts.connectionLostHandler != nil {
 			go c.opts.connectionLostHandler(c, err)
 		}
@@ -315,7 +377,7 @@ func (c *client) internalConnLost(err error) {
 
 // serverDisconnect cleanup when server send disconnect request or an error occurs.
 func (c *client) serverDisconnect(err error) {
-	if err := c.ok(); err == nil {
+	if c.ok() == nil {
 		if c.opts.connectionLostHandler != nil {
 			go c.opts.connectionLostHandler(c, err)
 		}
@@ -389,7 +451,7 @@ func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions)
 	}
 
 	pubMsg := &utp.PublishMessage{
-		Topic:   t.topic,
+		Topic:   t.wire(),
 		Payload: payload,
 		Ttl:     ttl,
 	}
@@ -415,6 +477,9 @@ func (c *client) Publish(pubTopic string, payload []byte, pubOpts ...PubOptions)
 
 	select {
 	case c.send <- &MessageAndResult{m: pub, r: r}:
+	case <-c.closeC:
+		r.setError(errClientClosed)
+		return r
 	case <-time.After(publishWaitTimeout):
 		r.setError(errors.New("publish timeout error occurred"))
 		return r
@@ -462,7 +527,7 @@ func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 			last = dur
 		}
 
-		relMsg.RelayRequests = append(relMsg.RelayRequests, &utp.RelayRequest{Topic: t.topic, Last: last})
+		relMsg.RelayRequests = append(relMsg.RelayRequests, &utp.RelayRequest{Topic: t.wire(), Last: last})
 	}
 
 	if relMsg.MessageID == 0 {
@@ -480,6 +545,9 @@ func (c *client) Relay(topics []string, relOpts ...RelOptions) Result {
 
 	select {
 	case c.send <- &MessageAndResult{m: relMsg, r: r}:
+	case <-c.closeC:
+		r.setError(errClientClosed)
+		return r
 	case <-time.After(relayWaitTimeout):
 		r.setError(errors.New("relay request timeout error occurred"))
 		return r
@@ -537,7 +605,7 @@ func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 		}
 	}
 
-	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.topic})
+	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.wire()})
 
 	if subMsg.MessageID == 0 {
 		mID := c.nextID(r)
@@ -554,6 +622,9 @@ func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 
 	select {
 	case c.send <- &MessageAndResult{m: subMsg, r: r}:
+	case <-c.closeC:
+		r.setError(errClientClosed)
+		return r
 	case <-time.After(subscribeWaitTimeout):
 		r.setError(errors.New("subscribe timeout error occurred"))
 		return r
@@ -611,7 +682,7 @@ func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Resul
 			}
 		}
 
-		subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.topic})
+		subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.wire()})
 	}
 
 	if subMsg.MessageID == 0 {
@@ -629,6 +700,9 @@ func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Resul
 
 	select {
 	case c.send <- &MessageAndResult{m: subMsg, r: r}:
+	case <-c.closeC:
+		r.setError(errClientClosed)
+		return r
 	case <-time.After(subscribeWaitTimeout):
 		r.setError(errors.New("subscribe timeout error occurred"))
 		return r
@@ -669,6 +743,9 @@ func (c *client) Unsubscribe(topics ...string) Result {
 
 	select {
 	case c.send <- &MessageAndResult{m: unsubMsg, r: r}:
+	case <-c.closeC:
+		r.setError(errClientClosed)
+		return r
 	case <-time.After(unsubscribeWaitTimeout):
 		r.setError(errors.New("unsubscribe timeout error occurred"))
 		return r
@@ -677,7 +754,8 @@ func (c *client) Unsubscribe(topics ...string) Result {
 	return r
 }
 
-// Load all stored messages and resend them to ensure DeliveryMode even after an application crash.
+// resume resends what a session left unfinished, so that delivery is ensured
+// even after an application crash.
 func (c *client) resume(prefix uint32, subscription bool) {
 	keys := store.Log.Keys(prefix)
 	for _, k := range keys {
@@ -685,58 +763,59 @@ func (c *client) resume(prefix uint32, subscription bool) {
 		if msg == nil {
 			continue
 		}
-		// isKeyOutbound
-		if (k & (1 << 4)) == 0 {
-			switch msg.Type() {
-			case utp.RELAY:
-				relMsg := msg.(*utp.Relay)
-				r := &RelayResult{result: result{complete: make(chan struct{})}}
-				r.messageID = msg.Info().MessageID
-				c.messageIds.resumeID(MID(r.messageID))
-				r.reqs = relMsg.RelayRequests
-				c.send <- &MessageAndResult{m: msg, r: r}
-			case utp.SUBSCRIBE:
-				if subscription {
-					subMsg := msg.(*utp.Subscribe)
-					r := &SubscribeResult{result: result{complete: make(chan struct{})}}
-					r.messageID = msg.Info().MessageID
-					c.messageIds.resumeID(MID(r.messageID))
-					r.subs = subMsg.Subscriptions
-					c.send <- &MessageAndResult{m: msg, r: r}
-				}
-			case utp.UNSUBSCRIBE:
-				if subscription {
-					r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
-					c.messageIds.resumeID(MID(r.messageID))
-					c.send <- &MessageAndResult{m: msg, r: r}
-				}
 
-			case utp.PUBLISH:
-				r := &PublishResult{result: result{complete: make(chan struct{})}}
+		if store.IsInboundKey(k) {
+			// A message of the server that the client has not finished receiving.
+			switch m := msg.(type) {
+			case *utp.Publish:
+				// Received but not yet receipted: ask for it again.
+				c.sendMessage(&MessageAndResult{m: &utp.ControlMessage{MessageID: m.MessageID, MessageType: utp.PUBLISH, FlowControl: utp.RECEIVE}})
+			case *utp.ControlMessage:
+				switch m.FlowControl {
+				case utp.NOTIFY:
+					c.sendMessage(&MessageAndResult{m: &utp.ControlMessage{MessageID: m.MessageID, MessageType: utp.PUBLISH, FlowControl: utp.RECEIVE}})
+				case utp.RECEIPT:
+					c.sendMessage(&MessageAndResult{m: m})
+				default:
+					store.Log.Delete(k)
+				}
+			default:
+				store.Log.Delete(k)
+			}
+			continue
+		}
+
+		// A message of the client that the server has not acknowledged.
+		switch msg.Type() {
+		case utp.RELAY:
+			relMsg := msg.(*utp.Relay)
+			r := &RelayResult{result: result{complete: make(chan struct{})}}
+			r.messageID = msg.Info().MessageID
+			c.messageIds.resumeID(MID(r.messageID))
+			r.reqs = relMsg.RelayRequests
+			c.sendMessage(&MessageAndResult{m: msg, r: r})
+		case utp.SUBSCRIBE:
+			if subscription {
+				subMsg := msg.(*utp.Subscribe)
+				r := &SubscribeResult{result: result{complete: make(chan struct{})}}
 				r.messageID = msg.Info().MessageID
 				c.messageIds.resumeID(MID(r.messageID))
-				c.send <- &MessageAndResult{m: msg, r: r}
-			case utp.FLOWCONTROL:
-				ctrlMsg := msg.(*utp.ControlMessage)
-				switch ctrlMsg.FlowControl {
-				case utp.RECEIPT:
-					c.send <- &MessageAndResult{m: ctrlMsg}
-				}
-			default:
-				store.Log.Delete(k)
+				r.subs = subMsg.Subscriptions
+				c.sendMessage(&MessageAndResult{m: msg, r: r})
 			}
-		} else {
-			switch msg.Type() {
-			case utp.FLOWCONTROL:
-				ctrlMsg := msg.(*utp.ControlMessage)
-				c.messageIds.resumeID(MID(ctrlMsg.MessageID))
-				switch ctrlMsg.FlowControl {
-				case utp.NOTIFY:
-					c.recv <- msg
-				}
-			default:
-				store.Log.Delete(k)
+		case utp.UNSUBSCRIBE:
+			if subscription {
+				r := &UnsubscribeResult{result: result{complete: make(chan struct{})}}
+				c.messageIds.resumeID(MID(msg.Info().MessageID))
+				c.sendMessage(&MessageAndResult{m: msg, r: r})
 			}
+		case utp.PUBLISH:
+			r := &PublishResult{result: result{complete: make(chan struct{})}}
+			r.messageID = msg.Info().MessageID
+			c.messageIds.resumeID(MID(r.messageID))
+			c.sendMessage(&MessageAndResult{m: msg, r: r})
+		default:
+			store.Log.Delete(k)
 		}
 	}
 }
@@ -764,11 +843,28 @@ func (c *client) updateLastTouched() {
 	c.lastTouched.Store(TimeNow())
 }
 
+// sendMessage queues m for the write loop, unless the client closes first.
+func (c *client) sendMessage(m *MessageAndResult) bool {
+	select {
+	case c.send <- m:
+		return true
+	case <-c.closeC:
+		return false
+	}
+}
+
+// The store is closed with the client, so a closed client stores nothing.
 func (c *client) storeInbound(m lp.MessagePack) {
+	if c.isClosed() {
+		return
+	}
 	store.Log.PersistInbound(uint32(c.sessID), m)
 }
 
 func (c *client) storeOutbound(m lp.MessagePack) {
+	if c.isClosed() {
+		return
+	}
 	store.Log.PersistOutbound(uint32(c.sessID), m)
 }
 
@@ -783,9 +879,11 @@ func (c *client) isClosed() bool {
 }
 
 // Check read ok status.
+var errClientClosed = errors.New("client connection is closed")
+
 func (c *client) ok() error {
 	if c.isClosed() {
-		return errors.New("client connection is closed")
+		return errClientClosed
 	}
 	return nil
 }

@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	defaultTimeout      = 2 * time.Second
 	defaultPoolCapacity = 27
 )
 
@@ -78,7 +77,7 @@ func (c *client) newBatchManager(opts *batchOptions) {
 
 	// start the dispacther
 	m.stopWg.Add(1)
-	go m.dispatch(defaultTimeout)
+	go m.dispatch()
 
 	c.batchManager = m
 }
@@ -98,7 +97,6 @@ func (m *batchManager) close() {
 // add adds a publish message to a batch in the batch group.
 func (m *batchManager) add(delay int32, pubMsg *utp.PublishMessage) *PublishResult {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	timeID := m.TimeID(delay)
 	b, ok := m.batchGroup[timeID]
 	if !ok {
@@ -107,11 +105,32 @@ func (m *batchManager) add(delay int32, pubMsg *utp.PublishMessage) *PublishResu
 	b.pubMessages = append(b.pubMessages, pubMsg)
 	b.count++
 	b.size += len(pubMsg.Payload)
-	if b.count > m.opts.batchCountThreshold || b.size > m.opts.batchByteThreshold {
-		m.push(b)
+	full := b.count > m.opts.batchCountThreshold || b.size > m.opts.batchByteThreshold
+	if full {
 		delete(m.batchGroup, timeID)
 	}
+	m.mu.Unlock()
+
+	// Push outside the lock: it waits for the dispatcher.
+	if full {
+		m.push(b)
+	}
 	return b.r
+}
+
+// takeDue removes and returns the batches whose time has come.
+func (m *batchManager) takeDue() []*batch {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	timeNow := timeID(TimeNow().UnixNano())
+	var due []*batch
+	for timeID, batch := range m.batchGroup {
+		if timeID < timeNow {
+			due = append(due, batch)
+			delete(m.batchGroup, timeID)
+		}
+	}
+	return due
 }
 
 // push enqueues a batch to publish.
@@ -134,53 +153,28 @@ func (m *batchManager) publishLoop(interval time.Duration) {
 	for {
 		select {
 		case <-m.stop:
-			timeNow := timeID(TimeNow().UnixNano())
-			for timeID, batch := range m.batchGroup {
-				if timeID < timeNow {
-					m.mu.Lock()
-					m.push(batch)
-					delete(m.batchGroup, timeID)
-					m.mu.Unlock()
-				}
+			for _, batch := range m.takeDue() {
+				m.push(batch)
 			}
 			close(m.publishQueue)
 
 			return
 		case <-publishC:
-			timeNow := timeID(TimeNow().UnixNano())
-			for timeID, batch := range m.batchGroup {
-				if timeID < timeNow {
-					m.mu.Lock()
-					m.push(batch)
-					delete(m.batchGroup, timeID)
-					m.mu.Unlock()
-				}
+			for _, batch := range m.takeDue() {
+				m.push(batch)
 			}
 		}
 	}
 }
 
-// dispatch handles publishing messages for the batches in queue.
-func (m *batchManager) dispatch(timeout time.Duration) {
-LOOP:
-	b, ok := <-m.publishQueue
-	if !ok {
-		close(m.send)
-		m.stopWg.Done()
-		return
+// dispatch hands the queued batches to the publisher. When the publisher's
+// pool is full it waits instead of dropping the batch.
+func (m *batchManager) dispatch() {
+	for b := range m.publishQueue {
+		m.send <- b
 	}
-
-	select {
-	case m.send <- b:
-	default:
-		// pool is full, let GC handle the batches
-		goto WAIT
-	}
-
-WAIT:
-	// Wait for a while
-	time.Sleep(timeout)
-	goto LOOP
+	close(m.send)
+	m.stopWg.Done()
 }
 
 // publish publishes the messages.
@@ -204,6 +198,8 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 
 			select {
 			case c.send <- &MessageAndResult{m: pub, r: b.r}:
+			case <-c.closeC:
+				b.r.setError(errClientClosed)
 			case <-time.After(publishWaitTimeout):
 				b.r.setError(errors.New("publish timeout error occurred"))
 			}
@@ -218,6 +214,8 @@ func (m *batchManager) publish(c *client, publishWaitTimeout time.Duration) {
 
 				select {
 				case c.send <- &MessageAndResult{m: pub, r: b.r}:
+				case <-c.closeC:
+					b.r.setError(errClientClosed)
 				case <-time.After(publishWaitTimeout):
 					b.r.setError(errors.New("publish timeout error occurred"))
 				}
