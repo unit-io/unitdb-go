@@ -8,6 +8,9 @@ import (
 	"github.com/unit-io/unitdb/server/utp"
 )
 
+// MaxFrameSize is the largest message body accepted from the server.
+const MaxFrameSize = 4 << 20
+
 // MessagePack is the interface for all Messages
 type MessagePack interface {
 	Type() utp.MessageType
@@ -27,6 +30,10 @@ func Read(r io.Reader) (MessagePack, error) {
 		return &utp.Disconnect{}, nil
 	}
 
+	// The length comes from the server: check it before allocating.
+	if fh.MessageLength < 0 || fh.MessageLength > MaxFrameSize {
+		return nil, fmt.Errorf("message::Read: invalid message length %d", fh.MessageLength)
+	}
 	rawMsg := make([]byte, fh.MessageLength)
 	_, err := io.ReadFull(r, rawMsg)
 	if err != nil {

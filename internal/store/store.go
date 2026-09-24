@@ -36,11 +36,7 @@ func Open(path string, size int64, reset bool) error {
 
 // Close terminates connection to persistent storage.
 func Close() error {
-	if adp.IsOpen() {
-		return adp.Close()
-	}
-
-	return nil
+	return adp.Close()
 }
 
 // IsOpen checks if persistent storage connection has been initialized.
@@ -95,69 +91,69 @@ type MessageLog struct{}
 // Log is the anchor for storing/retrieving Message objects
 var Log MessageLog
 
-// handle which outgoing messages are stored
-func (l *MessageLog) PersistOutbound(blockID uint32, outMsg lp.MessagePack) {
-	switch outMsg.(type) {
-	case *utp.Publish, *utp.Subscribe, *utp.Unsubscribe:
-		// Received a publish. store it in ibound
-		// until ACKNOWLEDGE or COMPLETE is sent
-		okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
-		m, err := lp.Encode(outMsg)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		adp.PutMessage(okey, m.Bytes())
+// Log keys hold the block (session) id in the high 32 bits and the message
+// id in the low 16 bits. Bit 16 is set for entries about messages the server
+// sent, since their ids are allocated independently of the client's own.
+const inboundKey = 1 << 16
+
+func logKey(blockID uint32, messageID uint16, inbound bool) uint64 {
+	key := uint64(blockID)<<32 | uint64(messageID)
+	if inbound {
+		key |= inboundKey
 	}
-	if outMsg.Type() == utp.FLOWCONTROL {
-		msg := *outMsg.(*utp.ControlMessage)
-		switch msg.FlowControl {
-		case utp.RECEIPT:
-			// Received a RECEIPT control message. store it in obound
-			// until COMPLETE is received.
-			okey := uint64(blockID)<<32 + uint64(outMsg.Info().MessageID)
-			m, err := lp.Encode(outMsg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(okey, m.Bytes())
+	return key
+}
+
+// IsInboundKey reports whether a log key is about a message the server sent.
+func IsInboundKey(key uint64) bool {
+	return key&inboundKey != 0
+}
+
+func putMessage(key uint64, m lp.MessagePack) {
+	buf, err := lp.Encode(m)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	adp.PutMessage(key, buf.Bytes())
+}
+
+// PersistOutbound logs the outgoing messages that wait for the server.
+func (l *MessageLog) PersistOutbound(blockID uint32, outMsg lp.MessagePack) {
+	switch m := outMsg.(type) {
+	case *utp.Publish, *utp.Subscribe, *utp.Unsubscribe:
+		// Kept until the server acknowledges it.
+		putMessage(logKey(blockID, outMsg.Info().MessageID, false), outMsg)
+	case *utp.ControlMessage:
+		if m.FlowControl == utp.RECEIPT {
+			// A receipt for a message of the server, kept until the server
+			// completes the flow. It replaces the stored notify.
+			putMessage(logKey(blockID, m.MessageID, true), outMsg)
 		}
 	}
 }
 
-// handle which incoming messages are stored
+// PersistInbound logs the incoming messages that wait for the client and
+// removes the entries whose flow the server completed.
 func (l *MessageLog) PersistInbound(blockID uint32, inMsg lp.MessagePack) {
-	switch inMsg.(type) {
+	switch m := inMsg.(type) {
 	case *utp.Publish:
-		// Received a publish. store it in ibound
-		// until COMPLETE sent
-		ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
-		m, err := lp.Encode(inMsg)
-		if err != nil {
-			fmt.Println(err)
-			return
+		// A reliable message is kept until its receipt is sent; an express
+		// message needs nothing more.
+		if m.DeliveryMode != 0 {
+			putMessage(logKey(blockID, m.MessageID, true), inMsg)
 		}
-		adp.PutMessage(ikey, m.Bytes())
-	}
-	if inMsg.Type() == utp.FLOWCONTROL {
-		msg := *inMsg.(*utp.ControlMessage)
-		switch msg.FlowControl {
-		case utp.ACKNOWLEDGE, utp.COMPLETE:
-			// Sending ACKNOWLEDGE, delete matching PUBLISH for EXPRESS delivery mode
-			// or sending COMPLETE, delete matching RECEIVE for RELIABLE delivery mode from ibound
-			okey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
-			adp.DeleteMessage(okey)
+	case *utp.ControlMessage:
+		switch m.FlowControl {
+		case utp.ACKNOWLEDGE:
+			// The server acknowledged one of the client's messages.
+			adp.DeleteMessage(logKey(blockID, m.MessageID, false))
+		case utp.COMPLETE:
+			// The server completed the flow of one of its messages.
+			adp.DeleteMessage(logKey(blockID, m.MessageID, true))
 		case utp.NOTIFY:
-			// Sending RECEIPT. store in obound
-			// until COMPLETE received
-			ikey := uint64(blockID)<<32 + uint64(inMsg.Info().MessageID)
-			m, err := lp.Encode(inMsg)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			adp.PutMessage(ikey, m.Bytes())
+			// Kept until the message is received.
+			putMessage(logKey(blockID, m.MessageID, true), inMsg)
 		}
 	}
 }
@@ -201,5 +197,5 @@ func (l *MessageLog) Reset(prefix uint32) {
 }
 
 func evalPrefix(prefix uint32, key uint64) bool {
-	return uint64(prefix) == key&0xFFFFFFFF
+	return uint32(key>>32) == prefix
 }

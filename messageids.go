@@ -35,9 +35,12 @@ func (mids *messageIds) resumeID(id MID) {
 func (mids *messageIds) nextID(r Result) MID {
 	mids.Lock()
 	defer mids.Unlock()
-	mids.id--
-	if _, ok := mids.resumedIds[mids.id]; ok {
-		mids.nextID(r)
+	// Skip the ids of resumed messages that are still in flight.
+	for {
+		mids.id--
+		if _, ok := mids.resumedIds[mids.id]; !ok {
+			break
+		}
 	}
 	mids.index[mids.id] = r
 	return mids.id

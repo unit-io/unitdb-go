@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"time"
 
 	lp "github.com/unit-io/unitdb-go/internal/net"
 	"github.com/unit-io/unitdb/server/utp"
 )
+
+// readIdleTimeout is how long the client waits for any message from the
+// server before it considers the connection dead.
+var readIdleTimeout = 120 * time.Second
 
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
@@ -59,13 +62,15 @@ func (c *client) readLoop(ctx context.Context) (err error) {
 	}()
 
 	reader := bufio.NewReaderSize(c.conn, 65536)
-	// Set read/write deadlines so we can close dangling connections
-	c.conn.SetDeadline(time.Now().Add(time.Second * 120))
 
 	for {
+		// Refresh the read deadline for every message so that only a
+		// connection with no traffic at all, not even keepalive pings, is closed.
+		c.conn.SetReadDeadline(time.Now().Add(c.readIdleTimeout))
+
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		case <-c.closeC:
 			return nil
 		default:
@@ -99,9 +104,12 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 			case utp.PINGREQ:
 				c.updateLastTouched()
 			case utp.SUBSCRIBE, utp.UNSUBSCRIBE, utp.RELAY, utp.PUBLISH:
+				// Resumed messages have no result to complete.
 				mId := c.inboundID(ctrlMsg.MessageID)
-				c.getType(mId).flowComplete()
-				c.freeID(mId)
+				if r := c.getType(mId); r != nil {
+					r.flowComplete()
+					c.freeID(mId)
+				}
 			}
 		case utp.NOTIFY:
 			recv := &utp.ControlMessage{
@@ -109,7 +117,7 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 				MessageType: utp.PUBLISH,
 				FlowControl: utp.RECEIVE,
 			}
-			c.send <- &MessageAndResult{m: recv}
+			c.sendMessage(&MessageAndResult{m: recv})
 		case utp.COMPLETE:
 			mId := c.inboundID(ctrlMsg.MessageID)
 			r := c.getType(mId)
@@ -119,7 +127,10 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 			}
 		}
 	case utp.PUBLISH:
-		c.pub <- inMsg.(*utp.Publish)
+		select {
+		case c.pub <- inMsg.(*utp.Publish):
+		case <-c.closeC:
+		}
 	case utp.DISCONNECT:
 		go c.serverDisconnect(errors.New("server initiated disconnect")) // no harm in calling this if the connection is already down (better than stopping!)
 	}
@@ -130,11 +141,11 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 func (c *client) writeLoop(ctx context.Context) (err error) {
 	var buf bytes.Buffer
 
-	defer c.internalConnLost(err)
+	defer func() { c.internalConnLost(err) }()
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-c.closeC:
 			return
 		case outMsg, ok := <-c.send:
@@ -158,12 +169,12 @@ func (c *client) writeLoop(ctx context.Context) (err error) {
 }
 
 func (c *client) dispatcher(ctx context.Context) (err error) {
-	defer c.internalConnLost(err)
+	defer func() { c.internalConnLost(err) }()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		case <-c.closeC:
 			return
 		case pub, ok := <-c.pub:
@@ -181,23 +192,21 @@ func (c *client) dispatcher(ctx context.Context) (err error) {
 	}
 }
 
-// keepalive - Send ping when connection unused for set period
-// connection passed in to avoid race condition on shutdown
+// keepalive sends a ping when nothing was received for the keep alive period,
+// and closes the connection when a ping is not answered within the ping timeout.
 func (c *client) keepalive(ctx context.Context) {
-	var pingInterval int32
-	var pingSent time.Time
-
-	if c.opts.keepAlive > 10 {
-		pingInterval = 5
-	} else {
-		pingInterval = c.opts.keepAlive / 2
+	keepAlive := time.Duration(c.opts.keepAlive) * time.Second
+	interval := keepAlive / 2
+	if interval > 5*time.Second {
+		interval = 5 * time.Second
 	}
+	if interval < 100*time.Millisecond {
+		interval = 100 * time.Millisecond
+	}
+	pingTicker := time.NewTicker(interval)
+	defer pingTicker.Stop()
 
-	pingTicker := time.NewTicker(time.Duration(pingInterval * int32(time.Second)))
-	defer func() {
-		pingTicker.Stop()
-	}()
-
+	var pingSent time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -205,27 +214,17 @@ func (c *client) keepalive(ctx context.Context) {
 		case <-c.closeC:
 			return
 		case <-pingTicker.C:
-			lastAction := c.lastAction.Load().(time.Time)
-			lastTouched := c.lastTouched.Load().(time.Time)
-			// live := TimeNow().Add(-time.Duration(c.opts.keepAlive * int32(time.Second)))
-			liveDuration := time.Duration(c.opts.keepAlive * int32(time.Second))
-			timeout := TimeNow().Add(-c.opts.pingTimeout)
-
-			// if lastAction.After(live) || lastTouched.After(live) {
-			if time.Since(lastAction) >= liveDuration || time.Since(lastTouched) >= liveDuration {
-				ping := &utp.Pingreq{}
-				m, err := lp.Encode(ping)
-				if err != nil {
-					fmt.Println(err)
+			// lastTouched is when the server last answered a ping.
+			if lastTouched := c.lastTouched.Load().(time.Time); pingSent.After(lastTouched) {
+				if time.Since(pingSent) >= c.opts.pingTimeout {
+					go c.internalConnLost(errors.New("pingresp not received, disconnecting"))
+					return
 				}
-				c.conn.Write(m.Bytes())
-				c.updateLastTouched()
-				pingSent = TimeNow()
+				continue
 			}
-			if lastTouched.Before(timeout) && pingSent.Before(timeout) {
-				fmt.Println("keepalive error")
-				go c.internalConnLost(errors.New("pingresp not received, disconnecting")) // no harm in calling this if the connection is already down (better than stopping!)
-				return
+			if time.Since(c.lastAction.Load().(time.Time)) >= keepAlive {
+				pingSent = TimeNow()
+				c.sendMessage(&MessageAndResult{m: &utp.Pingreq{}})
 			}
 		}
 	}
@@ -244,7 +243,7 @@ func ack(c *client, pub *utp.Publish) func() {
 			}
 			// persist outbound
 			c.storeOutbound(rec)
-			c.send <- &MessageAndResult{m: rec}
+			c.sendMessage(&MessageAndResult{m: rec})
 		// DeliveryMode Express
 		case 0:
 			ack := &utp.ControlMessage{
@@ -254,7 +253,7 @@ func ack(c *client, pub *utp.Publish) func() {
 			}
 			// persist outbound
 			c.storeOutbound(ack)
-			c.send <- &MessageAndResult{m: ack}
+			c.sendMessage(&MessageAndResult{m: ack})
 		}
 	}
 }

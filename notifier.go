@@ -38,17 +38,16 @@ type Notice struct {
 // }
 
 type notifier struct {
+	mu      sync.RWMutex
 	filters []filter
 
 	inFlight int32 // atomic
 	limit    int32
 	wg       sync.WaitGroup
 
-	scheduled bool
-	changes   chan []*Notice
-	queue     []*Notice
-	closeC    chan struct{}
-	_closed   uint32 // atomic
+	changes chan []*Notice
+	closeC  chan struct{}
+	_closed uint32 // atomic
 }
 
 func newNotifier(limit int32) *notifier {
@@ -63,39 +62,26 @@ func newNotifier(limit int32) *notifier {
 }
 
 func (n *notifier) addFilter(fn func(notice *Notice) error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.filters = append(n.filters, fn)
 }
 
-func (n *notifier) emit() bool {
-	var changes []*Notice
-	if n.scheduled && n.hasObservers() {
-		if n.queue != nil {
-			changes = n.queue
-			n.queue = nil
-		} else {
-			changes = make([]*Notice, 0)
-		}
-		n.scheduled = false
-		n.changes <- changes
-	}
-	return changes != nil
-}
-
 func (n *notifier) hasObservers() bool {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
 	return len(n.filters) > 0
 }
 
+// notify queues messages for the filters. It is called concurrently, once
+// per received message, and gives up when the notifier closes.
 func (n *notifier) notify(messages []*PubMessage) {
-	if !n.hasObservers() {
+	if messages == nil || !n.hasObservers() {
 		return
 	}
-	if messages != nil {
-		notice := &Notice{messages: messages}
-		n.queue = append(n.queue, notice)
-	}
-	if !n.scheduled {
-		n.scheduled = true
-		n.emit()
+	select {
+	case n.changes <- []*Notice{{messages: messages}}:
+	case <-n.closeC:
 	}
 }
 
@@ -109,7 +95,10 @@ func (n *notifier) changeNotifier() {
 		case <-n.closeC:
 			return
 		case notices := <-n.changes:
-			for _, fltr := range n.filters {
+			n.mu.RLock()
+			filters := n.filters
+			n.mu.RUnlock()
+			for _, fltr := range filters {
 				for _, notice := range notices {
 					fltr(notice)
 				}

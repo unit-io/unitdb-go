@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/golang/protobuf v1.5.2
-	github.com/unit-io/unitdb v0.2.0
+	github.com/unit-io/unitdb v0.3.0
 	google.golang.org/grpc v1.39.0
 )
 
