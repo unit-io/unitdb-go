@@ -42,9 +42,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: stable
-      # The correctness checks only. SA1019 is off until the move to a unitdb
-      # release without github.com/golang/protobuf.
-      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -checks 'SA*,-SA1019' ./...
+      # The correctness checks only.
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -checks 'SA*' ./...
 
   govulncheck:
     runs-on: ubuntu-latest

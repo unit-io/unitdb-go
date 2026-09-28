@@ -9,6 +9,8 @@ To build [unitdb](https://github.com/unit-io/unitdb) from source code use go get
 
 > go get -u github.com/unit-io/unitdb/server
 
+The server needs an encryption key of its own: set `encryption_config`'s `key` in unitdb.conf, or the `UNITDB_ENCRYPTION_KEY` environment variable, to 32 random characters, for example the output of `openssl rand -base64 24`.
+
 ### Usage
 Detailed API documentation is available using the [godoc.org](https://godoc.org/github.com/unit-io/unitdb-go) service.
 

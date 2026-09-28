@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	lp "github.com/unit-io/unitdb-go/internal/net"
 	"github.com/unit-io/unitdb-go/internal/store"
 	"github.com/unit-io/unitdb/server/common"
@@ -21,6 +20,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 
 	// Database store
 	_ "github.com/unit-io/unitdb-go/internal/db/unitdb"
