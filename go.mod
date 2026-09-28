@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/unit-io/unitdb v0.4.0
 	google.golang.org/grpc v1.83.2
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
