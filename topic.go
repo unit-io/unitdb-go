@@ -155,7 +155,7 @@ func (t *topic) parse(text string) (ok bool) {
 
 	var multiWildcard bool
 	if strings.HasSuffix(t.topic, TopicMultiWildcardSymbol) {
-		t.topic = strings.TrimRight(t.topic, TopicMultiWildcardSymbol)
+		t.topic = strings.TrimRight(t.topic, ".") // the wildcard, and any dots before it
 		multiWildcard = true
 	}
 

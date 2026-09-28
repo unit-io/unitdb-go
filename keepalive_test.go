@@ -3,7 +3,6 @@ package unitdb
 import (
 	"bufio"
 	"io"
-	"io/ioutil"
 	"net"
 	"testing"
 	"time"
@@ -32,13 +31,13 @@ func silentServer(t *testing.T) string {
 		if err := fh.FromBinary(r); err != nil {
 			return
 		}
-		if _, err := io.CopyN(ioutil.Discard, r, int64(fh.MessageLength)); err != nil {
+		if _, err := io.CopyN(io.Discard, r, int64(fh.MessageLength)); err != nil {
 			return
 		}
 		ack, _ := (&utp.ConnectAcknowledge{ReturnCode: utp.Accepted, Epoch: 1, ConnID: 1000}).ToBinary()
 		buf, _ := lp.Encode(&utp.ControlMessage{MessageType: utp.CONNECT, FlowControl: utp.ACKNOWLEDGE, Message: ack.Bytes()})
 		conn.Write(buf.Bytes())
-		io.Copy(ioutil.Discard, r)
+		io.Copy(io.Discard, r)
 	}()
 	return l.Addr().String()
 }

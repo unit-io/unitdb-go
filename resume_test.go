@@ -1,7 +1,6 @@
 package unitdb
 
 import (
-	"io/ioutil"
 	"os"
 	"sync"
 	"testing"
@@ -13,7 +12,7 @@ import (
 
 func openTestStore(t *testing.T) {
 	t.Helper()
-	dir, err := ioutil.TempDir("", "unitdb-client-store")
+	dir, err := os.MkdirTemp("", "unitdb-client-store")
 	if err != nil {
 		t.Fatal(err)
 	}
