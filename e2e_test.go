@@ -130,7 +130,7 @@ func startServer() {
 		"listen": %q,
 		"grpc_listen": %q,
 		"logging_level": "Error",
-		"encryption_config": {"key": "4BWm1vZletvrCDGWsF6mex8oBSd59m6I", "identifier": "local"},
+		"encryption_config": {"key": "test-only-key-do-not-use-0000000", "identifier": "local"},
 		"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
 	}`, e2e.tcpAddr, e2e.grpcAddr)
 	if err := ioutil.WriteFile(filepath.Join(e2e.dir, "unitdb.conf"), []byte(conf), 0644); err != nil {

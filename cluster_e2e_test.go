@@ -115,7 +115,7 @@ func startCluster(t *testing.T) *testCluster {
 			"listen": %q,
 			"grpc_listen": %q,
 			"logging_level": "Error",
-			"encryption_config": {"key": "4BWm1vZletvrCDGWsF6mex8oBSd59m6I", "identifier": "local"},
+			"encryption_config": {"key": "test-only-key-do-not-use-0000000", "identifier": "local"},
 			"cluster_config": %s,
 			"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
 		}`, n.tcpAddr, n.grpcAddr, clusterConf)
