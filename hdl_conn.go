@@ -55,23 +55,25 @@ func verifyCONNACK(conn net.Conn) (uint8, int32, int32, error) {
 }
 
 // Handle handles incoming messages
-func (c *client) readLoop(ctx context.Context) (err error) {
+func (c *client) readLoop(ctx context.Context, gen uint64, conn net.Conn, done <-chan struct{}) (err error) {
 	var msg lp.MessagePack
 	defer func() {
-		c.internalConnLost(err)
+		c.connLost(gen, err)
 	}()
 
-	reader := bufio.NewReaderSize(c.conn, 65536)
+	reader := bufio.NewReaderSize(conn, 65536)
 
 	for {
 		// Refresh the read deadline for every message so that only a
 		// connection with no traffic at all, not even keepalive pings, is closed.
-		c.conn.SetReadDeadline(time.Now().Add(c.readIdleTimeout))
+		conn.SetReadDeadline(time.Now().Add(c.readIdleTimeout))
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-c.closeC:
+			return nil
+		case <-done:
 			return nil
 		default:
 			// Unpack an incoming Message
@@ -138,15 +140,17 @@ func (c *client) handler(inMsg lp.MessagePack) error {
 	return nil
 }
 
-func (c *client) writeLoop(ctx context.Context) (err error) {
+func (c *client) writeLoop(ctx context.Context, gen uint64, conn net.Conn, done <-chan struct{}) (err error) {
 	var buf bytes.Buffer
 
-	defer func() { c.internalConnLost(err) }()
+	defer func() { c.connLost(gen, err) }()
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-c.closeC:
+			return
+		case <-done:
 			return
 		case outMsg, ok := <-c.send:
 			if !ok {
@@ -163,14 +167,16 @@ func (c *client) writeLoop(ctx context.Context) (err error) {
 			if err != nil {
 				return err
 			}
-			c.conn.Write(buf.Bytes())
+			if _, err = conn.Write(buf.Bytes()); err != nil {
+				return err
+			}
 		}
 	}
 }
 
+// dispatcher hands received messages to the filters. It outlives a
+// connection: it stops when the client closes.
 func (c *client) dispatcher(ctx context.Context) (err error) {
-	defer func() { c.internalConnLost(err) }()
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -194,7 +200,7 @@ func (c *client) dispatcher(ctx context.Context) (err error) {
 
 // keepalive sends a ping when nothing was received for the keep alive period,
 // and closes the connection when a ping is not answered within the ping timeout.
-func (c *client) keepalive(ctx context.Context) {
+func (c *client) keepalive(ctx context.Context, gen uint64, done <-chan struct{}) {
 	keepAlive := time.Duration(c.opts.keepAlive) * time.Second
 	interval := keepAlive / 2
 	if interval > 5*time.Second {
@@ -213,11 +219,13 @@ func (c *client) keepalive(ctx context.Context) {
 			return
 		case <-c.closeC:
 			return
+		case <-done:
+			return
 		case <-pingTicker.C:
 			// lastTouched is when the server last answered a ping.
 			if lastTouched := c.lastTouched.Load().(time.Time); pingSent.After(lastTouched) {
 				if time.Since(pingSent) >= c.opts.pingTimeout {
-					go c.internalConnLost(errors.New("pingresp not received, disconnecting"))
+					go c.connLost(gen, errors.New("pingresp not received, disconnecting"))
 					return
 				}
 				continue
