@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum go.mod allows, and the latest release.
+        go: [go.mod, stable]
+    steps:
+      - uses: actions/checkout@v7
+      # The end-to-end tests build the server from source, and are skipped
+      # without it.
+      - uses: actions/checkout@v7
+        with:
+          repository: unit-io/unitdb
+          path: unitdb-server
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go != 'go.mod' && matrix.go || '' }}
+          go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
+      - run: go vet ./...
+      - run: go test ./...
+        env:
+          UNITDB_SERVER_DIR: ${{ github.workspace }}/unitdb-server
+
+  staticcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+      # The correctness checks only. SA1019 is off until the move to a unitdb
+      # release without github.com/golang/protobuf.
+      - run: go run honnef.co/go/tools/cmd/staticcheck@2026.2.1 -checks 'SA*,-SA1019' ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: stable

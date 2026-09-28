@@ -19,6 +19,8 @@ import (
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"github.com/unit-io/unitdb/server/utp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 
 	// Database store
 	_ "github.com/unit-io/unitdb-go/internal/db/unitdb"
@@ -144,7 +146,7 @@ func (c *client) openStore() error {
 }
 
 func StreamConn(
-	stream grpc.Stream,
+	stream grpc.ClientStream,
 ) *common.Conn {
 	packetFunc := func(msg proto.Message) *[]byte {
 		return &msg.(*pbx.Packet).Data
@@ -471,16 +473,22 @@ func (c *client) dial(ctx context.Context, uri *url.URL) (net.Conn, error) {
 		if c.opts.connectTimeout > 0 {
 			dialCtx, dialCancel = context.WithTimeout(ctx, c.opts.connectTimeout)
 		}
-		conn, err := grpc.DialContext(
-			dialCtx,
-			uri.Host,
-			grpc.WithBlock(),
-			grpc.WithInsecure(),
+		// passthrough hands the address to the dialer as it is, as
+		// grpc.Dial did.
+		conn, err := grpc.NewClient(
+			"passthrough:///"+uri.Host,
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
 			// A frame of the largest size the server accepts, with its headers.
 			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(lp.MaxFrameSize+1<<10)),
 		)
+		if err != nil {
+			dialCancel()
+			return nil, err
+		}
+		err = waitReady(dialCtx, conn)
 		dialCancel()
 		if err != nil {
+			conn.Close()
 			return nil, err
 		}
 
@@ -495,6 +503,22 @@ func (c *client) dial(ctx context.Context, uri *url.URL) (net.Conn, error) {
 		return net.DialTimeout(uri.Scheme, uri.Host, c.opts.connectTimeout)
 	default:
 		return nil, fmt.Errorf("unsupported server scheme %q", uri.Scheme)
+	}
+}
+
+// waitReady connects conn and waits until it is ready or ctx is done, as the
+// deprecated grpc.WithBlock did: a server that does not answer fails the
+// dial, and the next server is tried.
+func waitReady(ctx context.Context, conn *grpc.ClientConn) error {
+	conn.Connect()
+	for {
+		state := conn.GetState()
+		if state == connectivity.Ready {
+			return nil
+		}
+		if !conn.WaitForStateChange(ctx, state) {
+			return ctx.Err()
+		}
 	}
 }
 

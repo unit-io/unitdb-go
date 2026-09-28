@@ -14,7 +14,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/exec"
@@ -100,7 +99,7 @@ func buildServer() (bin, skip string, err error) {
 			build.skip = fmt.Sprintf("unitdb server source not found in %s (set UNITDB_SERVER_DIR)", src)
 			return
 		}
-		if e2e.dir, err = ioutil.TempDir("", "unitdb-e2e"); err != nil {
+		if e2e.dir, err = os.MkdirTemp("", "unitdb-e2e"); err != nil {
 			build.err = err
 			return
 		}
@@ -133,7 +132,7 @@ func startServer() {
 		"encryption_config": {"key": "test-only-key-do-not-use-0000000", "identifier": "local"},
 		"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
 	}`, e2e.tcpAddr, e2e.grpcAddr)
-	if err := ioutil.WriteFile(filepath.Join(e2e.dir, "unitdb.conf"), []byte(conf), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(e2e.dir, "unitdb.conf"), []byte(conf), 0644); err != nil {
 		e2e.err = err
 		return
 	}
@@ -160,7 +159,7 @@ func startServer() {
 				break
 			}
 			if time.Now().After(deadline) {
-				log, _ := ioutil.ReadFile(logFile.Name())
+				log, _ := os.ReadFile(logFile.Name())
 				e2e.err = fmt.Errorf("server did not listen on %s: %v\n%s", addr, err, log)
 				return
 			}
@@ -355,7 +354,7 @@ func (c *rawConn) subscribe(id uint16, topic string, deliveryMode uint8) {
 // is closed; a client closes its store asynchronously when its connection is lost.
 func storeDir(t *testing.T) string {
 	t.Helper()
-	dir, err := ioutil.TempDir("", "unitdb-client")
+	dir, err := os.MkdirTemp("", "unitdb-client")
 	if err != nil {
 		t.Fatal(err)
 	}
