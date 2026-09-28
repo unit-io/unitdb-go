@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/golang/protobuf/proto"
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"github.com/unit-io/unitdb/server/utp"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestReadRejectsInvalidLength(t *testing.T) {

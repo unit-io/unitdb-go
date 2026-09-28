@@ -14,6 +14,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -25,11 +26,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/golang/protobuf/proto"
 	lp "github.com/unit-io/unitdb-go/internal/net"
 	"github.com/unit-io/unitdb-go/internal/store"
 	pbx "github.com/unit-io/unitdb/server/proto"
 	"github.com/unit-io/unitdb/server/utp"
+	"google.golang.org/protobuf/proto"
 )
 
 const e2eTimeout = 10 * time.Second
@@ -187,14 +188,31 @@ func stopServer() {
 	}
 }
 
+// freeAddr returns an address no one listens on, for a server to bind later.
+//
+// Its port is below the ephemeral range (from 32768 on Linux, 49152 on
+// macOS): a port from there, free when picked, can be taken by any outgoing
+// connection before the server binds it, such as a cluster's own
+// connections while a node starts, and the server then fails to start.
 func freeAddr() string {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		panic(err)
+	for i := 0; i < 1000; i++ {
+		port := 20000 + rand.Intn(12000)
+		if _, taken := takenPorts.LoadOrStore(port, true); taken {
+			continue
+		}
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		l, err := net.Listen("tcp", addr)
+		if err != nil {
+			continue
+		}
+		l.Close()
+		return addr
 	}
-	defer l.Close()
-	return l.Addr().String()
+	panic("no free port")
 }
+
+// takenPorts are the ports freeAddr returned, which it does not return again.
+var takenPorts sync.Map
 
 // rawConn is a minimal uTP connection used as the second party in a test.
 type rawConn struct {
