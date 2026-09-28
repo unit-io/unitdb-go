@@ -125,12 +125,8 @@ func TestReconnectAfterServerRestart(t *testing.T) {
 
 func TestReconnectQueuesCalls(t *testing.T) {
 	c := startCluster(t)
-	n, subNode := c.nodes[0], c.nodes[1]
-	clientID := newClientIDAt(t, subNode.tcpAddr)
-	sub := rawConnAt(t, subNode, clientID, true)
-	sub.subscribe(1, "rc.queued", 0)
-	settle()
-
+	n, other := c.nodes[0], c.nodes[1]
+	clientID := newClientIDAt(t, other.tcpAddr)
 	events := newConnEvents()
 	client := clusterClient(t, "tcp://"+n.tcpAddr, clientID,
 		append(events.options(), WithAutoReconnect(), WithMaxReconnectInterval(500*time.Millisecond), WithWriteTimeout(20*time.Second))...)
@@ -139,16 +135,31 @@ func TestReconnectQueuesCalls(t *testing.T) {
 	n.stop()
 	events.waitLost(t)
 	// Published while the client is down: it waits for the connection.
-	r := client.Publish("rc.queued", []byte("queued"))
+	r := client.Publish("rc.queued", []byte("queued"), WithTTL("1h"))
 	time.Sleep(500 * time.Millisecond)
 	if err := n.start(); err != nil {
 		t.Fatalf("restart %s: %v", n.name, err)
 	}
 	events.waitConnected(t, e2eTimeout)
 	waitResult(t, "publish made while reconnecting", r)
-	sub.waitFor("queued message", func(m lp.MessagePack) bool {
+
+	// The message was stored: relay it from another node once the cluster
+	// has settled. A live subscriber on another node would miss it if the
+	// restarted node owns the topic and has not got its subscriptions back.
+	time.Sleep(3 * time.Second)
+	relay := rawConnAt(t, other, clientID, true)
+	relay.send(&utp.Relay{MessageID: 1, RelayRequests: []*utp.RelayRequest{{Topic: "rc.queued", Last: "1h"}}})
+	relay.waitFor("queued message", func(m lp.MessagePack) bool {
 		pub, ok := m.(*utp.Publish)
-		return ok && len(pub.Messages) > 0 && string(pub.Messages[0].Payload) == "queued"
+		if !ok {
+			return false
+		}
+		for _, pm := range pub.Messages {
+			if string(pm.Payload) == "queued" {
+				return true
+			}
+		}
+		return false
 	})
 }
 
