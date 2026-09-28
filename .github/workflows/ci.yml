@@ -34,6 +34,10 @@ jobs:
       - run: go test ./...
         env:
           UNITDB_SERVER_DIR: ${{ github.workspace }}/unitdb-server
+          # The server can need a newer Go than the client: the client is
+          # tested with the Go set up, and the server built with the Go its
+          # go.mod asks for.
+          GOTOOLCHAIN: auto
 
   staticcheck:
     runs-on: ubuntu-latest
