@@ -82,27 +82,44 @@ func serverSourceDir() string {
 	return filepath.Join("..", "unitdb")
 }
 
+// build builds the server from source into e2e.dir, once.
+var build struct {
+	once sync.Once
+	bin  string
+	skip string
+	err  error
+}
+
+func buildServer() (bin, skip string, err error) {
+	build.once.Do(func() {
+		src, err := filepath.Abs(serverSourceDir())
+		if err == nil {
+			_, err = os.Stat(filepath.Join(src, "server", "main.go"))
+		}
+		if err != nil {
+			build.skip = fmt.Sprintf("unitdb server source not found in %s (set UNITDB_SERVER_DIR)", src)
+			return
+		}
+		if e2e.dir, err = ioutil.TempDir("", "unitdb-e2e"); err != nil {
+			build.err = err
+			return
+		}
+		bin := filepath.Join(e2e.dir, "unitdb-server")
+		cmd := exec.Command("go", "build", "-o", bin, "./server")
+		cmd.Dir = src
+		if out, err := cmd.CombinedOutput(); err != nil {
+			build.err = fmt.Errorf("building the server: %v\n%s", err, out)
+			return
+		}
+		build.bin = bin
+	})
+	return build.bin, build.skip, build.err
+}
+
 func startServer() {
-	src, err := filepath.Abs(serverSourceDir())
-	if err == nil {
-		_, err = os.Stat(filepath.Join(src, "server", "main.go"))
-	}
-	if err != nil {
-		e2e.skip = fmt.Sprintf("unitdb server source not found in %s (set UNITDB_SERVER_DIR)", src)
-		return
-	}
-
-	e2e.dir, err = ioutil.TempDir("", "unitdb-e2e")
-	if err != nil {
-		e2e.err = err
-		return
-	}
-
-	bin := filepath.Join(e2e.dir, "unitdb-server")
-	build := exec.Command("go", "build", "-o", bin, "./server")
-	build.Dir = src
-	if out, err := build.CombinedOutput(); err != nil {
-		e2e.err = fmt.Errorf("building the server: %v\n%s", err, out)
+	bin, skip, err := buildServer()
+	if skip != "" || err != nil {
+		e2e.skip, e2e.err = skip, err
 		return
 	}
 
@@ -190,7 +207,13 @@ type rawConn struct {
 
 func dialRaw(t *testing.T) *rawConn {
 	t.Helper()
-	conn, err := net.DialTimeout("tcp", e2e.tcpAddr, e2eTimeout)
+	return dialRawAt(t, e2e.tcpAddr)
+}
+
+// dialRawAt opens a raw connection to the server at addr.
+func dialRawAt(t *testing.T, addr string) *rawConn {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, e2eTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +287,13 @@ func isControl(msgType utp.MessageType, flow utp.FlowControl, id uint16) func(lp
 // newClientID asks the server for a new primary client id.
 func newClientID(t *testing.T) string {
 	t.Helper()
-	c := dialRaw(t)
+	return newClientIDAt(t, e2e.tcpAddr)
+}
+
+// newClientIDAt asks the server at addr for a new primary client id.
+func newClientIDAt(t *testing.T, addr string) string {
+	t.Helper()
+	c := dialRawAt(t, addr)
 	// The keep alive makes the message long enough for the server's protocol sniffing.
 	c.send(&utp.Connect{KeepAlive: 30})
 	m := c.waitFor("assigned client id", isPublishOn("unitdb/clientid/"))
@@ -274,7 +303,14 @@ func newClientID(t *testing.T) string {
 // connectRaw connects a rawConn with clientID in insecure mode.
 func connectRaw(t *testing.T, clientID string) *rawConn {
 	t.Helper()
-	c := dialRaw(t)
+	return connectRawAt(t, e2e.tcpAddr, clientID)
+}
+
+// connectRawAt connects a rawConn to the server at addr with clientID in
+// insecure mode.
+func connectRawAt(t *testing.T, addr, clientID string) *rawConn {
+	t.Helper()
+	c := dialRawAt(t, addr)
 	c.send(&utp.Connect{ClientID: clientID, InsecureFlag: true, KeepAlive: 30, SessKey: int32(nextSessKey())})
 	m := c.waitFor("connect acknowledge", func(m lp.MessagePack) bool {
 		ctrl, ok := m.(*utp.ControlMessage)
@@ -387,7 +423,7 @@ func collect(t *testing.T, c Client, topic string) <-chan string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := make(chan string, 100)
+	out := make(chan string, 1024)
 	done := make(chan struct{})
 	t.Cleanup(func() { close(done) })
 	go func() {
