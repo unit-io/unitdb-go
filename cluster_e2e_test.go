@@ -590,9 +590,10 @@ func TestClusterClientResumesSessionOnAnotherNode(t *testing.T) {
 	c.kill(dead)
 
 	// The client resumes the session on a surviving node, with the dead node
-	// first in its server list, and receives the messages.
-	client := clusterClient(t, "tcp://"+dead.tcpAddr, clientID,
-		AddServer("tcp://"+live[0].tcpAddr),
+	// first in its server list (NewClient adds its target after the
+	// AddServer servers), and receives the messages.
+	client := clusterClient(t, "tcp://"+live[0].tcpAddr, clientID,
+		AddServer("tcp://"+dead.tcpAddr),
 		WithSessionKey(sessKey),
 		WithConnectTimeout(2*time.Second))
 	got := collect(t, client, topic)

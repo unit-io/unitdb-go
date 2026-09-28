@@ -81,6 +81,24 @@ type client struct {
 	// Batch
 	batchManager *batchManager
 
+	// idBase maps local message ids to the ids on the wire. It is the first
+	// connection's id and does not change when the client reconnects, so
+	// that the server's answers to resent messages find their results.
+	idBase int32
+
+	// The current connection: its generation, and done, closed when it ends.
+	// A loop of an ended connection cannot end its successor.
+	connMu   sync.Mutex
+	connGen  uint64
+	connDone chan struct{}
+	connCtx  context.Context // bounds every connection of the client
+	started  sync.Once       // starts what outlives a connection
+
+	// subs are the topics the client subscribed to, to subscribe to again
+	// when it reconnects.
+	subsMu sync.Mutex
+	subs   map[string]*utp.Subscription
+
 	// Close.
 	closeC chan struct{}
 	closeW sync.WaitGroup
@@ -161,6 +179,10 @@ func (c *client) close() error {
 	if !c.setClosed() {
 		return errors.New("error disconnecting client")
 	}
+	c.connMu.Lock()
+	gen := c.connGen
+	c.connMu.Unlock()
+	c.endConnection(gen)
 
 	if c.cancel != nil {
 		c.cancel()
@@ -206,7 +228,7 @@ func (c *client) ConnectContext(ctx context.Context) error {
 
 	// ctx bounds the whole connection; the connect timeout only bounds dialing.
 	ctx, cancel := context.WithCancel(ctx)
-	if err := c.attemptConnection(ctx); err != nil {
+	if err := c.attemptConnection(ctx, c.opts.cleanSession); err != nil {
 		cancel()
 		// Release the process wide store so that a new client can be created.
 		store.Close()
@@ -244,33 +266,166 @@ func (c *client) ConnectContext(ctx context.Context) error {
 		store.Session.Put(uint64(c.epoch), rawSess)
 	}
 
-	// batch manager
-	c.newBatchManager(&batchOptions{
-		batchDuration:       c.opts.batchDuration,
-		batchCountThreshold: c.opts.batchCountThreshold,
-		batchByteThreshold:  c.opts.batchByteThreshold,
+	c.connCtx = ctx
+	c.started.Do(func() {
+		// batch manager
+		c.newBatchManager(&batchOptions{
+			batchDuration:       c.opts.batchDuration,
+			batchCountThreshold: c.opts.batchCountThreshold,
+			batchByteThreshold:  c.opts.batchByteThreshold,
+		})
+		go c.dispatcher(ctx) // dispatch messages to client
 	})
-
-	if c.opts.keepAlive != 0 {
-		c.updateLastAction()
-		c.updateLastTouched()
-		go c.keepalive(ctx)
-	}
-	// c.closeW.Add(3)
-	go c.readLoop(ctx)   // process incoming messages
-	go c.writeLoop(ctx)  // send messages to servers
-	go c.dispatcher(ctx) // dispatch messages to client
+	c.startConnection(ctx)
 
 	// Resend what the session left unfinished, now that the loops run.
 	if resume {
 		c.resume(c.sessID, c.opts.resumeSubs)
 	}
+	if c.opts.connectionHandler != nil {
+		go c.opts.connectionHandler(c)
+	}
 
 	return nil
 }
 
+// startConnection starts the loops of the connection just made.
+func (c *client) startConnection(ctx context.Context) {
+	c.connMu.Lock()
+	c.connGen++
+	gen, conn := c.connGen, c.conn
+	done := make(chan struct{})
+	c.connDone = done
+	c.connMu.Unlock()
+
+	if c.opts.keepAlive != 0 {
+		c.updateLastAction()
+		c.updateLastTouched()
+		go c.keepalive(ctx, gen, done)
+	}
+	go c.readLoop(ctx, gen, conn, done)  // process incoming messages
+	go c.writeLoop(ctx, gen, conn, done) // send messages to servers
+}
+
+// endConnection stops the loops of connection gen, if it is the current one
+// and still running, and reports whether it did.
+func (c *client) endConnection(gen uint64) (net.Conn, bool) {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	if gen != c.connGen || c.connDone == nil {
+		return nil, false
+	}
+	close(c.connDone)
+	c.connDone = nil
+	return c.conn, true
+}
+
+// connected reports whether the client has a live connection.
+func (c *client) connected() bool {
+	c.connMu.Lock()
+	defer c.connMu.Unlock()
+	return c.connDone != nil
+}
+
+// connLost ends connection gen after err, once: it reconnects if the client
+// reconnects by itself, and closes the client otherwise.
+func (c *client) connLost(gen uint64, err error) {
+	conn, ok := c.endConnection(gen)
+	if !ok || c.isClosed() {
+		return
+	}
+	if conn != nil {
+		conn.Close()
+	}
+	if c.opts.connectionLostHandler != nil {
+		go c.opts.connectionLostHandler(c, err)
+	}
+	if c.opts.autoReconnect && c.connCtx != nil && c.connCtx.Err() == nil {
+		go c.reconnect()
+		return
+	}
+	c.close()
+}
+
+// reconnect connects again, trying each server in turn with a growing pause
+// between attempts, until it succeeds or the client closes. It resumes the
+// session, resends what the server had not acknowledged, and subscribes again.
+func (c *client) reconnect() {
+	pause := 100 * time.Millisecond
+	for {
+		select {
+		case <-c.closeC:
+			return
+		case <-c.connCtx.Done():
+			c.close()
+			return
+		case <-time.After(pause):
+		}
+		// The session goes on: never ask for a clean one again.
+		if err := c.attemptConnection(c.connCtx, false); err == nil {
+			if c.isClosed() {
+				c.conn.Close()
+				return
+			}
+			c.startConnection(c.connCtx)
+			c.resume(c.sessID, c.opts.resumeSubs)
+			c.resubscribe()
+			if c.opts.connectionHandler != nil {
+				go c.opts.connectionHandler(c)
+			}
+			return
+		}
+		if pause *= 2; pause > c.opts.maxReconnectInterval {
+			pause = c.opts.maxReconnectInterval
+		}
+	}
+}
+
+// trackSubscriptions records subscriptions, to subscribe again after a
+// reconnect.
+func (c *client) trackSubscriptions(subs []*utp.Subscription) {
+	c.subsMu.Lock()
+	defer c.subsMu.Unlock()
+	if c.subs == nil {
+		c.subs = make(map[string]*utp.Subscription)
+	}
+	for _, sub := range subs {
+		c.subs[sub.Topic] = sub
+	}
+}
+
+// untrackSubscriptions forgets topics the client unsubscribed from.
+func (c *client) untrackSubscriptions(topics []string) {
+	c.subsMu.Lock()
+	defer c.subsMu.Unlock()
+	for _, text := range topics {
+		t := new(topic)
+		if t.parse(text) {
+			delete(c.subs, t.wire())
+		}
+		delete(c.subs, text)
+	}
+}
+
+// resubscribe subscribes again to the tracked topics: the server drops a
+// connection's subscriptions when it ends.
+func (c *client) resubscribe() {
+	c.subsMu.Lock()
+	subMsg := &utp.Subscribe{}
+	for _, sub := range c.subs {
+		subMsg.Subscriptions = append(subMsg.Subscriptions, sub)
+	}
+	c.subsMu.Unlock()
+	if len(subMsg.Subscriptions) == 0 {
+		return
+	}
+	r := &SubscribeResult{result: result{complete: make(chan struct{})}}
+	subMsg.MessageID = c.outboundID(c.nextID(r))
+	c.sendMessage(&MessageAndResult{m: subMsg, r: r})
+}
+
 // attemptConnection connects to the first server that accepts the connection.
-func (c *client) attemptConnection(ctx context.Context) error {
+func (c *client) attemptConnection(ctx context.Context, clean bool) error {
 	var err error
 	for _, uri := range c.opts.servers {
 		var conn net.Conn
@@ -280,13 +435,21 @@ func (c *client) attemptConnection(ctx context.Context) error {
 
 		// get Connect message from options.
 		cm := newConnectMsgFromOptions(c.opts, uri)
+		cm.CleanSessFlag = clean
 		rc, epoch, connID, cerr := Connect(conn, cm)
 		if cerr == nil && rc == utp.Accepted {
+			c.connMu.Lock()
 			c.conn = conn
+			c.connMu.Unlock()
 			c.epoch = uint32(epoch)
 			c.connID = connID
-			c.sessID = uint32(connID)
-			c.messageIds.reset(MID(c.connID))
+			if c.idBase == 0 {
+				// The first connection: its id is the session's id, until
+				// the session store names an older one, and the id base.
+				c.idBase = connID
+				c.sessID = uint32(connID)
+				c.messageIds.reset(MID(connID))
+			}
 			return nil
 		}
 		conn.Close()
@@ -347,8 +510,9 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 		return nil
 	}
 
-	// A client that never connected has nothing to tell the server.
-	if c.conn == nil {
+	// A client that never connected, or is reconnecting, has nothing to tell
+	// the server.
+	if c.conn == nil || !c.connected() {
 		return c.close()
 	}
 
@@ -362,27 +526,17 @@ func (c *client) DisconnectContext(ctx context.Context) error {
 	return err
 }
 
-// internalConnLost cleanup when connection is lost or an error occurs
+// internalConnLost ends the current connection after err.
 func (c *client) internalConnLost(err error) {
-	// It is possible that internalConnLost will be called multiple times simultaneously
-	// (including after sending a DisconnectMessage) as such we only do cleanup etc if the
-	// routines were actually running and are not being disconnected at users request
-	if c.ok() == nil {
-		if c.opts.connectionLostHandler != nil {
-			go c.opts.connectionLostHandler(c, err)
-		}
-		c.close()
-	}
+	c.connMu.Lock()
+	gen := c.connGen
+	c.connMu.Unlock()
+	c.connLost(gen, err)
 }
 
-// serverDisconnect cleanup when server send disconnect request or an error occurs.
+// serverDisconnect ends the current connection when the server disconnects.
 func (c *client) serverDisconnect(err error) {
-	if c.ok() == nil {
-		if c.opts.connectionLostHandler != nil {
-			go c.opts.connectionLostHandler(c, err)
-		}
-		c.close()
-	}
+	c.internalConnLost(err)
 }
 
 func (c *client) TopicFilter(subscriptionTopic string) (*TopicFilter, error) {
@@ -606,6 +760,7 @@ func (c *client) Subscribe(subTopic string, subOpts ...SubOptions) Result {
 	}
 
 	subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.wire()})
+	c.trackSubscriptions(subMsg.Subscriptions)
 
 	if subMsg.MessageID == 0 {
 		mID := c.nextID(r)
@@ -684,6 +839,7 @@ func (c *client) SubscribeMultiple(topics []string, subOpts ...SubOptions) Resul
 
 		subMsg.Subscriptions = append(subMsg.Subscriptions, &utp.Subscription{DeliveryMode: deliveryMode, Delay: delay, Topic: t.wire()})
 	}
+	c.trackSubscriptions(subMsg.Subscriptions)
 
 	if subMsg.MessageID == 0 {
 		mID := c.nextID(r)
@@ -727,6 +883,7 @@ func (c *client) Unsubscribe(topics ...string) Result {
 		subs = append(subs, sub)
 	}
 	unsubMsg.Subscriptions = subs
+	c.untrackSubscriptions(topics)
 
 	if unsubMsg.MessageID == 0 {
 		mID := c.nextID(r)
@@ -826,11 +983,11 @@ func TimeNow() time.Time {
 }
 
 func (c *client) inboundID(id uint16) MID {
-	return MID(c.connID - int32(id))
+	return MID(c.idBase - int32(id))
 }
 
 func (c *client) outboundID(mid MID) (id uint16) {
-	return uint16(c.connID - (int32(mid)))
+	return uint16(c.idBase - (int32(mid)))
 }
 
 func (c *client) updateLastAction() {

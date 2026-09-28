@@ -180,7 +180,7 @@ func TestMessageIdsSkipsResumedID(t *testing.T) {
 }
 
 func TestOutboundInboundID(t *testing.T) {
-	c := &client{connID: 1000}
+	c := &client{idBase: 1000}
 	for _, mid := range []MID{999, 1, 500} {
 		if got := c.inboundID(c.outboundID(mid)); got != mid {
 			t.Fatalf("inboundID(outboundID(%d)) = %d", mid, got)

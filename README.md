@@ -22,6 +22,23 @@ Samples are available in the examples directory for reference. To build unitdb s
 go mod edit -replace github.com/unit-io/unitdb=$GOPATH/src/github.com/unit-io/unitdb
 ```
 
+### Reconnecting
+By default a client closes when its connection is lost, and calls the handler set with `WithConnectionLostHandler`. With `WithAutoReconnect()` it connects again by itself instead, trying each server in turn, for example the other nodes of a cluster:
+
+```golang
+client, err := udb.NewClient(
+	"tcp://node-one:6060",
+	clientID,
+	udb.AddServer("tcp://node-two:6060"),
+	udb.WithSessionKey(sessionKey),
+	udb.WithAutoReconnect(),
+	udb.WithConnectionLostHandler(func(_ udb.Client, err error) { log.Println("connection lost:", err) }),
+	udb.WithConnectionHandler(func(udb.Client) { log.Println("connected") }),
+)
+```
+
+It resumes its session, resends what the server had not acknowledged, and subscribes again to its topics. Calls made while it reconnects wait for the connection, up to the write timeout. A message in flight when the connection drops can be delivered twice. `WithMaxReconnectInterval` caps the pause between attempts (10 seconds by default).
+
 ## Contributing
 If you'd like to contribute, please fork the repository and use a feature branch. Pull requests are welcome.
 

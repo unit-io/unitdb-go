@@ -40,6 +40,8 @@ type options struct {
 	storeSize               int
 	storeLogReleaseDuration time.Duration
 	connectionHandler       ConnectionHandler
+	autoReconnect           bool
+	maxReconnectInterval    time.Duration
 	connectionLostHandler   ConnectionLostHandler
 	writeTimeout            time.Duration
 	batchDuration           time.Duration
@@ -117,6 +119,8 @@ func WithDefaultOptions() Options {
 		o.batchByteThreshold = maxPubBytes
 		o.batchCountThreshold = maxPubCount
 		o.resumeSubs = false
+		o.autoReconnect = false
+		o.maxReconnectInterval = 10 * time.Second
 	})
 }
 
@@ -248,6 +252,30 @@ func WithStoreLogReleaseDuration(dur time.Duration) Options {
 func WithConnectionHandler(handler ConnectionHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.connectionHandler = handler
+	})
+}
+
+// WithAutoReconnect makes the client reconnect by itself when its
+// connection is lost, trying each server in turn with a growing pause between
+// attempts, up to WithMaxReconnectInterval. It resumes its session, resends
+// what the server had not acknowledged, and subscribes again to its topics.
+// Calls made while it reconnects wait for the connection, up to the write
+// timeout. A message in flight when the connection drops can be delivered
+// twice. The connection lost handler is called when the connection drops, and
+// the connection handler once it is back.
+func WithAutoReconnect() Options {
+	return newFuncOption(func(o *options) {
+		o.autoReconnect = true
+	})
+}
+
+// WithMaxReconnectInterval sets the longest pause between reconnection
+// attempts, 10 seconds by default.
+func WithMaxReconnectInterval(d time.Duration) Options {
+	return newFuncOption(func(o *options) {
+		if d > 0 {
+			o.maxReconnectInterval = d
+		}
 	})
 }
 
