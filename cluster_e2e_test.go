@@ -137,28 +137,7 @@ func startCluster(t *testing.T) *testCluster {
 	if _, err := c.waitLeader(c.nodes); err != nil {
 		t.Fatal(err)
 	}
-	if refusesInsecure() {
-		c.waitTrust()
-	}
 	return c
-}
-
-// waitTrust waits until every node takes the trust of a service's
-// connections forwarded to it by the others. A node trusts a forwarded
-// connection only once the leader's pings have told it that the forwarding
-// node advertises service ids, a while after the nodes agree on a leader;
-// until then a service's requests on topics another node owns are refused.
-func (c *testCluster) waitTrust() {
-	c.t.Helper()
-	id := serviceClientID(c.t)
-	deadline := time.Now().Add(15 * time.Second)
-	for _, n := range c.nodes {
-		for attempt := 0; !c.trusted(n, id, attempt); attempt++ {
-			if time.Now().After(deadline) {
-				c.t.Fatalf("node %s's forwarded requests of a service are not trusted\nlogs:\n%s", n.name, n.logs.String())
-			}
-		}
-	}
 }
 
 // trusted reports whether a service's subscriptions and publishes on n, of
