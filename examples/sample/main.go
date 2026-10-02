@@ -71,19 +71,17 @@ func main() {
 	fmt.Printf("\tnum:       %d\n", *num)
 
 	if *action == "keygen" {
-		recv := make(chan [2][]byte)
-
+		// Keys are generated for a primary client id, on a connection
+		// without the insecure flag, and sent back on unitdb/keygen.
 		client, err := udb.NewClient(
 			*server,
 			*id,
-			// udb.WithInsecure(),
 			udb.WithUserNamePassword(*user, []byte(*password)),
 			udb.WithCleanSession(),
 			udb.WithConnectionLostHandler(func(client udb.Client, err error) {
 				if err != nil {
 					log.Fatal(err)
 				}
-				close(recv)
 			}),
 		)
 		if err != nil {
@@ -91,6 +89,10 @@ func main() {
 		}
 		ctx := context.Background()
 		err = client.ConnectContext(ctx)
+		if err != nil {
+			log.Fatalf("err: %s", err)
+		}
+		responses, err := client.TopicFilter("unitdb/keygen")
 		if err != nil {
 			log.Fatalf("err: %s", err)
 		}
@@ -111,17 +113,16 @@ func main() {
 		if _, err := r.Get(ctx, 1*time.Second); err != nil {
 			log.Fatalf("err: %s", err)
 		}
-		for {
-			select {
-			case <-ctx.Done():
-				client.DisconnectContext(ctx)
-				fmt.Println("Subscriber Disconnected")
-				return
-			case incoming := <-recv:
-				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", incoming[0], incoming[1])
-				return
+		select {
+		case messages := <-responses.Updates():
+			for _, msg := range messages {
+				fmt.Printf("RECEIVED TOPIC: %s MESSAGE: %s\n", msg.Topic, msg.Payload)
 			}
+		case <-time.After(5 * time.Second):
+			fmt.Println("No keygen response")
 		}
+		client.DisconnectContext(ctx)
+		return
 	}
 
 	if *action == "sub" {

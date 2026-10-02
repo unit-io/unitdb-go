@@ -157,9 +157,20 @@ func WithSessionKey(sessKey uint32) Options {
 	})
 }
 
-// WithInsecure returns an Option which makes client connection
-// with insecure flag so that client can provide topic with key prefix.
-// Use insecure flag only for test and debug connection and not for live client.
+// WithInsecure returns an Option which connects with the insecure flag, so
+// that the client publishes and subscribes on topics without topic keys.
+//
+// Since unitdb v0.6.0 a server refuses the flag (Connect returns an error
+// with return code 4) unless its config sets "allow_insecure": true, which
+// is meant for development and which a cluster node refuses to start with.
+// Use it only with such a standalone server, for tests and debugging.
+//
+// Without the flag, a client prefixes each topic with a topic key, as in
+// key+"/"+topic, which a primary client id requests from the server by
+// publishing to "unitdb/keygen". A trusted backend can instead connect with
+// a service client id, minted with the server's mintid command
+// (server/cmd/mintid -service), whose connections need no topic keys; see
+// the unitdb README.
 func WithInsecure() Options {
 	return newFuncOption(func(o *options) {
 		o.insecureFlag = true

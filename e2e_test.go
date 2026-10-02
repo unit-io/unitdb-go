@@ -86,9 +86,15 @@ func serverSourceDir() string {
 var build struct {
 	once sync.Once
 	bin  string
-	skip string
-	err  error
+	// mintid is the server's mintid command, which mints trusted service
+	// client ids, or "" for a server that predates it (before v0.6.0).
+	mintid string
+	skip   string
+	err    error
 }
+
+// testKey is the encryption key the test servers run with.
+const testKey = "test-only-key-do-not-use-0000000"
 
 func buildServer() (bin, skip string, err error) {
 	build.once.Do(func() {
@@ -111,9 +117,47 @@ func buildServer() (bin, skip string, err error) {
 			build.err = fmt.Errorf("building the server: %v\n%s", err, out)
 			return
 		}
+		// Servers since v0.6.0 refuse the insecure flag by default, and
+		// trust services by the ids mintid mints.
+		if _, err := os.Stat(filepath.Join(src, "server", "cmd", "mintid")); err == nil {
+			mintid := filepath.Join(e2e.dir, "mintid")
+			cmd := exec.Command("go", "build", "-o", mintid, "./server/cmd/mintid")
+			cmd.Dir = src
+			if out, err := cmd.CombinedOutput(); err != nil {
+				build.err = fmt.Errorf("building mintid: %v\n%s", err, out)
+				return
+			}
+			build.mintid = mintid
+		}
 		build.bin = bin
 	})
 	return build.bin, build.skip, build.err
+}
+
+// refusesInsecure reports whether the server built refuses the insecure flag
+// unless its config allows it, as servers do since v0.6.0. Call it after
+// buildServer.
+func refusesInsecure() bool { return build.mintid != "" }
+
+// serviceClientID mints a trusted service's client id of a new contract with
+// mintid, keyed as the test servers are. Its connections need no topic keys
+// and no insecure flag. Only servers that refuse the insecure flag have
+// mintid; call it after buildServer.
+func serviceClientID(t *testing.T) string {
+	t.Helper()
+	cmd := exec.Command(build.mintid, "-service")
+	cmd.Env = append(os.Environ(), "UNITDB_ENCRYPTION_KEY="+testKey)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("mintid: %v\n%s", err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if id, ok := strings.CutPrefix(line, "client id: "); ok {
+			return strings.TrimSpace(id)
+		}
+	}
+	t.Fatalf("mintid printed no client id:\n%s", out)
+	return ""
 }
 
 func startServer() {
@@ -125,14 +169,17 @@ func startServer() {
 
 	e2e.tcpAddr = freeAddr()
 	e2e.grpcAddr = freeAddr()
-	// The server reads the config next to its binary.
+	// The server reads the config next to its binary. The tests drive the
+	// client in insecure mode, which the server must allow; servers before
+	// v0.6.0 ignore allow_insecure and always allow it.
 	conf := fmt.Sprintf(`{
 		"listen": %q,
 		"grpc_listen": %q,
 		"logging_level": "Error",
-		"encryption_config": {"key": "test-only-key-do-not-use-0000000", "identifier": "local"},
+		"encryption_config": {"key": %q, "identifier": "local"},
+		"allow_insecure": true,
 		"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
-	}`, e2e.tcpAddr, e2e.grpcAddr)
+	}`, e2e.tcpAddr, e2e.grpcAddr, testKey)
 	if err := os.WriteFile(filepath.Join(e2e.dir, "unitdb.conf"), []byte(conf), 0644); err != nil {
 		e2e.err = err
 		return
@@ -1019,5 +1066,88 @@ func TestE2EGRPCConnectionsAreReleased(t *testing.T) {
 	// Nothing else leaks either, such as the store's buffer pool.
 	if after := settled(); after-before >= cycles {
 		t.Fatalf("goroutines grew from %d to %d over %d connect/disconnect cycles", before, after, cycles)
+	}
+}
+
+// TestE2EInsecureRefusedByDefault checks that a server without
+// allow_insecure, the default since unitdb v0.6.0, refuses a client with
+// WithInsecure, and that Connect returns the refusal.
+func TestE2EInsecureRefusedByDefault(t *testing.T) {
+	if testing.Short() {
+		t.Skip("end to end test skipped in short mode")
+	}
+	bin, skip, err := buildServer()
+	if skip != "" {
+		t.Skip(skip)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refusesInsecure() {
+		t.Skip("the server predates v0.6.0, which allows the insecure flag")
+	}
+
+	tcpAddr, grpcAddr := freeAddr(), freeAddr()
+	dbDir, err := os.MkdirTemp("", "unitdb-secure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dbDir) })
+	// The server's defaults, but for its addresses, key and store.
+	confName := fmt.Sprintf("secure-%s.conf", strings.ReplaceAll(tcpAddr, ":", "-"))
+	confPath := filepath.Join(filepath.Dir(bin), confName)
+	conf := fmt.Sprintf(`{
+		"listen": %q,
+		"grpc_listen": %q,
+		"logging_level": "Error",
+		"encryption_config": {"key": %q, "identifier": "local"},
+		"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
+	}`, tcpAddr, grpcAddr, testKey)
+	if err := os.WriteFile(confPath, []byte(conf), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Remove(confPath) })
+	n := &clusterNode{name: "secure", tcpAddr: tcpAddr, grpcAddr: grpcAddr, logs: &syncBuffer{},
+		args: []string{bin, "-config", confName, "-db_path", filepath.Join(dbDir, "db")}}
+	t.Cleanup(n.stop)
+	if err := n.start(); err != nil {
+		t.Fatalf("start the server: %v\n%s", err, n.logs.String())
+	}
+
+	clientID := newClientIDAt(t, tcpAddr)
+	for _, target := range []string{"tcp://" + tcpAddr, "grpc://" + grpcAddr} {
+		c, err := NewClient(target, clientID, WithInsecure(), WithStorePath(storeDir(t)), WithSessionKey(nextSessKey()), WithConnectTimeout(time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = c.Connect()
+		if err == nil {
+			c.Disconnect()
+			t.Fatalf("%s: a client with WithInsecure connected to a server without allow_insecure", target)
+		}
+		// The server answers 0x04, its Unauthorized (utp names the code
+		// ErrRefusedServerUnavailable).
+		if !strings.Contains(err.Error(), "return code 4") {
+			t.Fatalf("%s: Connect error %q does not carry return code 4", target, err)
+		}
+	}
+
+	// The server serves the same client id without the flag.
+	c := newE2EClientSecurity(t, "tcp://"+tcpAddr, clientID, false)
+	responses := collect(t, c, "unitdb/keygen")
+	waitResult(t, "keygen", c.Publish("unitdb/keygen", []byte(`[{"topic":"e2e.secure","type":"rw"}]`)))
+	var resp []struct {
+		Status int `json:"status"`
+	}
+	select {
+	case p := <-responses:
+		if err := json.Unmarshal([]byte(p), &resp); err != nil || len(resp) != 1 || resp[0].Status != 200 {
+			t.Fatalf("keygen response %s: %v", p, err)
+		}
+	case <-time.After(e2eTimeout):
+		t.Fatal("no keygen response")
+	}
+	if !n.alive() {
+		t.Fatalf("the server died\n%s", n.logs.String())
 	}
 }

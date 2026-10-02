@@ -24,6 +24,13 @@ Samples are available in the examples directory for reference. To build unitdb s
 go mod edit -replace github.com/unit-io/unitdb=$GOPATH/src/github.com/unit-io/unitdb
 ```
 
+### Topic keys and the insecure flag
+A client publishes and subscribes with topic keys: it prefixes a topic with a key, as in `key/teams.alpha.ch1`. A client with a primary client ID requests keys from the server by publishing `[{"topic":"teams.alpha.ch1","type":"rw"}]` to `unitdb/keygen`, and receives them on the same topic (see `examples/sample`, `-a keygen`).
+
+`WithInsecure()` connects with the insecure flag, which skips topic keys. Since unitdb v0.6.0 a server refuses it, and `Connect` returns the refusal (return code 4), unless the server's config sets `"allow_insecure": true`, which is for development only and which a cluster node refuses to start with. Use it only for tests and debugging against such a standalone server.
+
+A trusted backend, such as an API server acting for its users, needs no topic keys either: give it a service client ID, which only the server's `mintid` command issues, with the server's key (`go run ./server/cmd/mintid -config unitdb.conf -service` in the unitdb repository), and connect with it without `WithInsecure()`. A connection the backend opens for a user, with the user's client ID, skips topic keys once it publishes `{"client_id": "<the service's client ID>"}` to `unitdb/service`. Keep service IDs on servers, never on clients or devices. Topics whose first part starts with `$` are reserved for the server.
+
 ### Reconnecting
 By default a client closes when its connection is lost, and calls the handler set with `WithConnectionLostHandler`. With `WithAutoReconnect()` it connects again by itself instead, trying each server in turn, for example the other nodes of a cluster:
 

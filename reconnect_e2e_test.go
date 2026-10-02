@@ -62,7 +62,7 @@ func publishTo(t *testing.T, n *clusterNode, clientID, topic, payload string) {
 func TestReconnectToAnotherNode(t *testing.T) {
 	c := startCluster(t)
 	dead, other := c.nodes[0], c.nodes[1]
-	clientID := newClientIDAt(t, other.tcpAddr)
+	clientID := trustedClientID(t, other)
 	events := newConnEvents()
 	// NewClient adds its target after the AddServer servers: the client
 	// connects to the node about to die first.
@@ -102,7 +102,7 @@ func TestReconnectToAnotherNode(t *testing.T) {
 func TestReconnectAfterServerRestart(t *testing.T) {
 	c := startCluster(t)
 	n := c.nodes[0]
-	clientID := newClientIDAt(t, n.tcpAddr)
+	clientID := trustedClientID(t, n)
 	events := newConnEvents()
 	client := clusterClient(t, "tcp://"+n.tcpAddr, clientID,
 		append(events.options(), WithAutoReconnect(), WithMaxReconnectInterval(500*time.Millisecond))...)
@@ -126,7 +126,7 @@ func TestReconnectAfterServerRestart(t *testing.T) {
 func TestReconnectQueuesCalls(t *testing.T) {
 	c := startCluster(t)
 	n, other := c.nodes[0], c.nodes[1]
-	clientID := newClientIDAt(t, other.tcpAddr)
+	clientID := trustedClientID(t, other)
 	events := newConnEvents()
 	client := clusterClient(t, "tcp://"+n.tcpAddr, clientID,
 		append(events.options(), WithAutoReconnect(), WithMaxReconnectInterval(500*time.Millisecond), WithWriteTimeout(20*time.Second))...)
@@ -166,7 +166,7 @@ func TestReconnectQueuesCalls(t *testing.T) {
 func TestDisconnectWhileReconnecting(t *testing.T) {
 	c := startCluster(t)
 	n := c.nodes[0]
-	clientID := newClientIDAt(t, n.tcpAddr)
+	clientID := trustedClientID(t, n)
 	events := newConnEvents()
 	client := clusterClient(t, "tcp://"+n.tcpAddr, clientID,
 		append(events.options(), WithAutoReconnect(), WithMaxReconnectInterval(200*time.Millisecond))...)
@@ -200,7 +200,7 @@ func TestDisconnectWhileReconnecting(t *testing.T) {
 func TestNoReconnectByDefault(t *testing.T) {
 	c := startCluster(t)
 	n := c.nodes[0]
-	clientID := newClientIDAt(t, n.tcpAddr)
+	clientID := trustedClientID(t, n)
 	events := newConnEvents()
 	client := clusterClient(t, "tcp://"+n.tcpAddr, clientID, events.options()...)
 	events.waitConnected(t, e2eTimeout)
@@ -224,7 +224,7 @@ func TestNoReconnectByDefault(t *testing.T) {
 func TestReconnectWhenNodeDrains(t *testing.T) {
 	c := startCluster(t)
 	draining, other := c.nodes[0], c.nodes[1]
-	clientID := newClientIDAt(t, other.tcpAddr)
+	clientID := trustedClientID(t, other)
 	events := newConnEvents()
 	// The draining node first: NewClient adds its target after AddServer.
 	client := clusterClient(t, "tcp://"+other.tcpAddr, clientID,
