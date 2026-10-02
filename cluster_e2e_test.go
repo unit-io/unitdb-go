@@ -115,10 +115,10 @@ func startCluster(t *testing.T) *testCluster {
 			"listen": %q,
 			"grpc_listen": %q,
 			"logging_level": "Error",
-			"encryption_config": {"key": "test-only-key-do-not-use-0000000", "identifier": "local"},
+			"encryption_config": {"key": %q, "identifier": "local"},
 			"cluster_config": %s,
 			"store_config": {"reset": true, "adapters": {"unitdb": {"mem_size": 16777216}}}
-		}`, n.tcpAddr, n.grpcAddr, clusterConf)
+		}`, n.tcpAddr, n.grpcAddr, testKey, clusterConf)
 		confPath := filepath.Join(filepath.Dir(bin), confName)
 		if err := os.WriteFile(confPath, []byte(conf), 0644); err != nil {
 			t.Fatal(err)
@@ -138,6 +138,43 @@ func startCluster(t *testing.T) *testCluster {
 		t.Fatal(err)
 	}
 	return c
+}
+
+// trusted reports whether a service's subscriptions and publishes on n, of
+// clusterTopics topics (so some are owned by every node), deliver.
+func (c *testCluster) trusted(n *clusterNode, id string, attempt int) bool {
+	c.t.Helper()
+	conn := rawConnAt(c.t, n, id, true)
+	defer conn.conn.Close()
+	ts := topics(fmt.Sprintf("cl.trust.%s.%d", n.name, attempt))
+	sub := &utp.Subscribe{MessageID: 1}
+	for _, topic := range ts {
+		sub.Subscriptions = append(sub.Subscriptions, &utp.Subscription{Topic: topic})
+	}
+	conn.send(sub)
+	settle()
+	missing := map[string]bool{}
+	for i, topic := range ts {
+		missing[topic] = true
+		conn.send(&utp.Publish{MessageID: uint16(i + 2), Messages: []*utp.PublishMessage{{Topic: topic, Payload: []byte("trust")}}})
+	}
+	timeout := time.After(time.Second)
+	for len(missing) > 0 {
+		select {
+		case m, ok := <-conn.in:
+			if !ok {
+				return false
+			}
+			if pub, ok := m.(*utp.Publish); ok {
+				for _, pm := range pub.Messages {
+					delete(missing, pm.Topic)
+				}
+			}
+		case <-timeout:
+			return false
+		}
+	}
+	return true
 }
 
 func (n *clusterNode) start() error {
@@ -271,11 +308,31 @@ func dialTCP(addr string) (net.Conn, error) {
 	return net.DialTimeout("tcp", addr, 200*time.Millisecond)
 }
 
-// rawConnAt connects a raw connection to n with clientID and a fresh session.
-func rawConnAt(t *testing.T, n *clusterNode, clientID string, insecure bool) *rawConn {
+// trustedClientID returns a client id whose connections publish and
+// subscribe on plain topics, without topic keys. A cluster node refuses the
+// insecure flag since v0.6.0, so it is a trusted service's id, minted with
+// mintid. Servers before v0.6.0 have no service ids but take the flag: it is
+// then a primary client id from n, and connections with it set the flag (see
+// trustedFlag).
+func trustedClientID(t *testing.T, n *clusterNode) string {
+	t.Helper()
+	if refusesInsecure() {
+		return serviceClientID(t)
+	}
+	return newClientIDAt(t, n.tcpAddr)
+}
+
+// trustedFlag reports whether connections with a trustedClientID set the
+// insecure flag: with servers before v0.6.0 only.
+func trustedFlag() bool { return !refusesInsecure() }
+
+// rawConnAt connects a raw connection to n with clientID and a fresh
+// session. trusted connects as a trustedClientID does, which needs no topic
+// keys; clientID must then be one.
+func rawConnAt(t *testing.T, n *clusterNode, clientID string, trusted bool) *rawConn {
 	t.Helper()
 	c := dialRawAt(t, n.tcpAddr)
-	c.send(&utp.Connect{ClientID: clientID, InsecureFlag: insecure, KeepAlive: 30, SessKey: int32(nextSessKey())})
+	c.send(&utp.Connect{ClientID: clientID, InsecureFlag: trusted && trustedFlag(), KeepAlive: 30, SessKey: int32(nextSessKey())})
 	m := c.waitFor("connect acknowledge", func(m lp.MessagePack) bool {
 		ctrl, ok := m.(*utp.ControlMessage)
 		return ok && ctrl.MessageType == utp.CONNECT
@@ -288,10 +345,11 @@ func rawConnAt(t *testing.T, n *clusterNode, clientID string, insecure bool) *ra
 	return c
 }
 
-// clusterClient connects the client to target, one of the cluster's nodes.
+// clusterClient connects the client to target, one of the cluster's nodes,
+// with clientID, a trustedClientID.
 func clusterClient(t *testing.T, target, clientID string, opts ...Options) Client {
 	t.Helper()
-	return newE2EClient(t, target, clientID, opts...)
+	return newE2EClientSecurity(t, target, clientID, trustedFlag(), opts...)
 }
 
 // topics returns clusterTopics topics under prefix.
@@ -308,7 +366,7 @@ func settle() { time.Sleep(200 * time.Millisecond) }
 
 func TestClusterClientSubscribes(t *testing.T) {
 	c := startCluster(t)
-	clientID := newClientIDAt(t, c.nodes[0].tcpAddr)
+	clientID := trustedClientID(t, c.nodes[0])
 	for _, n := range c.nodes {
 		for _, transport := range []string{"tcp", "grpc"} {
 			t.Run(n.name+"/"+transport, func(t *testing.T) {
@@ -342,7 +400,7 @@ func TestClusterClientSubscribes(t *testing.T) {
 
 func TestClusterClientPublishes(t *testing.T) {
 	c := startCluster(t)
-	clientID := newClientIDAt(t, c.nodes[0].tcpAddr)
+	clientID := trustedClientID(t, c.nodes[0])
 	for _, n := range c.nodes {
 		t.Run(n.name, func(t *testing.T) {
 			ts := topics("cl.pub." + n.name)
@@ -377,7 +435,7 @@ func TestClusterClientPublishes(t *testing.T) {
 
 func TestClusterClientReliableDelivery(t *testing.T) {
 	c := startCluster(t)
-	clientID := newClientIDAt(t, c.nodes[0].tcpAddr)
+	clientID := trustedClientID(t, c.nodes[0])
 	for _, n := range c.nodes {
 		t.Run(n.name, func(t *testing.T) {
 			prefix := "cl.reliable." + n.name
@@ -406,7 +464,7 @@ func TestClusterClientReliableDelivery(t *testing.T) {
 
 func TestClusterClientRelay(t *testing.T) {
 	c := startCluster(t)
-	clientID := newClientIDAt(t, c.nodes[0].tcpAddr)
+	clientID := trustedClientID(t, c.nodes[0])
 	for _, n := range c.nodes {
 		t.Run(n.name, func(t *testing.T) {
 			prefix := "cl.relay." + n.name
@@ -473,7 +531,7 @@ func TestClusterClientSecurePubSub(t *testing.T) {
 
 func TestClusterClientWildcardSubscription(t *testing.T) {
 	c := startCluster(t)
-	clientID := newClientIDAt(t, c.nodes[0].tcpAddr)
+	clientID := trustedClientID(t, c.nodes[0])
 	for _, n := range c.nodes {
 		t.Run(n.name, func(t *testing.T) {
 			prefix := "cl.wild." + n.name
@@ -511,7 +569,7 @@ func TestClusterClientSurvivesNodeFailure(t *testing.T) {
 			}
 			live := c.others(dead)
 			clientNode, pubNode := live[0], live[1]
-			clientID := newClientIDAt(t, clientNode.tcpAddr)
+			clientID := trustedClientID(t, clientNode)
 
 			lost := make(chan error, 1)
 			client := clusterClient(t, "tcp://"+clientNode.tcpAddr, clientID,
@@ -557,7 +615,7 @@ func TestClusterClientResumesSessionOnAnotherNode(t *testing.T) {
 	c := startCluster(t)
 	dead := c.nodes[0]
 	live := c.others(dead)
-	clientID := newClientIDAt(t, live[0].tcpAddr)
+	clientID := trustedClientID(t, live[0])
 	sessKey := nextSessKey()
 	const n = 5
 	topic := "cl.session"
@@ -565,7 +623,7 @@ func TestClusterClientResumesSessionOnAnotherNode(t *testing.T) {
 	// A subscriber of the session on the node about to die, notified of
 	// reliable messages it does not receive yet.
 	held := dialRawAt(t, dead.tcpAddr)
-	held.send(&utp.Connect{ClientID: clientID, InsecureFlag: true, KeepAlive: 30, SessKey: int32(sessKey)})
+	held.send(&utp.Connect{ClientID: clientID, InsecureFlag: trustedFlag(), KeepAlive: 30, SessKey: int32(sessKey)})
 	held.waitFor("connect acknowledge", func(m lp.MessagePack) bool {
 		ctrl, ok := m.(*utp.ControlMessage)
 		return ok && ctrl.MessageType == utp.CONNECT
