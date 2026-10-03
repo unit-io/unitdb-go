@@ -24,6 +24,10 @@ type ConnectionHandler func(Client)
 // upon an uninteded disconnection from server.
 type ConnectionLostHandler func(Client, error)
 
+// ClientIDHandler is a callback that is called with the client's new client
+// id when the server renews it (see WithClientIDHandler).
+type ClientIDHandler func(Client, string)
+
 type options struct {
 	servers                 []*url.URL
 	clientID                string
@@ -43,6 +47,7 @@ type options struct {
 	autoReconnect           bool
 	maxReconnectInterval    time.Duration
 	connectionLostHandler   ConnectionLostHandler
+	clientIDHandler         ClientIDHandler
 	writeTimeout            time.Duration
 	batchDuration           time.Duration
 	batchByteThreshold      int
@@ -236,7 +241,12 @@ func WithConnectTimeout(t time.Duration) Options {
 	})
 }
 
-// WithStoreDir sets database directory.
+// WithStorePath sets the directory of the client's local store, /tmp/unitdb
+// by default. A client with a client id keeps its store in a directory named
+// after the id in it. When the server renews the id, the client leaves the
+// store where it is and records, in a small file named after the new id,
+// which directory holds it: a client created with the renewed id opens the
+// same store, and resumes what the previous run left unfinished.
 func WithStorePath(path string) Options {
 	return newFuncOption(func(o *options) {
 		o.storePath = path
@@ -295,6 +305,26 @@ func WithMaxReconnectInterval(d time.Duration) Options {
 func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 	return newFuncOption(func(o *options) {
 		o.connectionLostHandler = handler
+	})
+}
+
+// WithClientIDHandler sets handler function to be called with the client's
+// new client id when the server renews it.
+//
+// A server that issues v2 client ids renews a client id on connect, sending
+// the same id sealed again with a new expiry, when the client connected with
+// a v1 id, with an id sealed with a key being retired, or with one past 80%
+// of its lifetime. The client adopts the renewed id whether or not a handler is
+// set: it connects and reconnects with it from then on, and keeps its local
+// store (see WithStorePath). The id given to NewClient is not renewed for
+// the next run of the application, though: persist the id the handler is
+// given, and create the client with it next time, or the client connects
+// with the old id, which stops working once it expires.
+//
+// The handler runs in its own goroutine.
+func WithClientIDHandler(handler ClientIDHandler) Options {
+	return newFuncOption(func(o *options) {
+		o.clientIDHandler = handler
 	})
 }
 

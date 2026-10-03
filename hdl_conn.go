@@ -19,13 +19,17 @@ var readIdleTimeout = 120 * time.Second
 // Connect takes a connected net.Conn and performs the initial handshake. Paramaters are:
 // conn - Connected net.Conn
 // cm - Connect Message
+//
+// It returns the server's return code (see ConnAccepted and the codes that
+// follow it), or ConnNotAcknowledged with an error when it could not read the
+// server's acknowledgement.
 func Connect(conn net.Conn, cm *utp.Connect) (rc uint8, epoch int32, cid int32, err error) {
 	m, err := lp.Encode(cm)
 	if err != nil {
-		return utp.ErrRefusedServerUnavailable, 0, 0, err
+		return ConnNotAcknowledged, 0, 0, err
 	}
 	if _, err := conn.Write(m.Bytes()); err != nil {
-		return utp.ErrRefusedServerUnavailable, 0, 0, err
+		return ConnNotAcknowledged, 0, 0, err
 	}
 	return verifyCONNACK(conn)
 }
@@ -37,15 +41,15 @@ func Connect(conn net.Conn, cm *utp.Connect) (rc uint8, epoch int32, cid int32, 
 func verifyCONNACK(conn net.Conn) (uint8, int32, int32, error) {
 	ca, err := lp.Read(conn)
 	if err != nil {
-		return utp.ErrRefusedServerUnavailable, 0, 0, err
+		return ConnNotAcknowledged, 0, 0, err
 	}
 	if ca == nil {
-		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("nil connect acknowledge message")
+		return ConnNotAcknowledged, 0, 0, errors.New("nil connect acknowledge message")
 	}
 
 	pack, ok := ca.(*utp.ControlMessage)
 	if !ok {
-		return utp.ErrRefusedServerUnavailable, 0, 0, errors.New("first message must be connect acknowledge message")
+		return ConnNotAcknowledged, 0, 0, errors.New("first message must be connect acknowledge message")
 	}
 
 	connack := &utp.ConnectAcknowledge{}
@@ -84,6 +88,12 @@ func (c *client) readLoop(ctx context.Context, gen uint64, conn net.Conn, done <
 
 			// Persist incoming
 			c.storeInbound(msg)
+
+			// Renewed client ids and answers to requests (see requests.go),
+			// handled as they arrive, on the connection they arrive on.
+			if pub, ok := msg.(*utp.Publish); ok {
+				c.serverMessages(gen, pub)
+			}
 
 			// Message handler
 			if err := c.handler(msg); err != nil {
@@ -156,6 +166,11 @@ func (c *client) writeLoop(ctx context.Context, gen uint64, conn net.Conn, done 
 			if !ok {
 				// Channel closed.
 				return
+			}
+			if outMsg.req != nil && !c.writingRequest(outMsg.req, gen) {
+				// Failed before it was written: the result is complete.
+				c.freeID(c.inboundID(outMsg.m.(*utp.Publish).MessageID))
+				continue
 			}
 			switch msg := outMsg.m.(type) {
 			case *utp.Disconnect:
