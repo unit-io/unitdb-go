@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -145,7 +146,14 @@ func refusesInsecure() bool { return build.mintid != "" }
 // mintid; call it after buildServer.
 func serviceClientID(t *testing.T) string {
 	t.Helper()
-	cmd := exec.Command(build.mintid, "-service")
+	return mintID(t, "-service")
+}
+
+// mintID mints a client id with mintid and its args, keyed as the test
+// servers are; call it after buildServer.
+func mintID(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(build.mintid, args...)
 	cmd.Env = append(os.Environ(), "UNITDB_ENCRYPTION_KEY="+testKey)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1125,9 +1133,9 @@ func TestE2EInsecureRefusedByDefault(t *testing.T) {
 			c.Disconnect()
 			t.Fatalf("%s: a client with WithInsecure connected to a server without allow_insecure", target)
 		}
-		// The server answers 0x04, its Unauthorized (utp names the code
-		// ErrRefusedServerUnavailable).
-		if !strings.Contains(err.Error(), "return code 4") {
+		// The server answers 0x04, not authorized.
+		var cerr *ConnectError
+		if !errors.As(err, &cerr) || cerr.ReturnCode != ConnRefusedNotAuthorized || !strings.Contains(err.Error(), "return code 4") {
 			t.Fatalf("%s: Connect error %q does not carry return code 4", target, err)
 		}
 	}

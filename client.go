@@ -58,6 +58,31 @@ type Client interface {
 	// Messages published to those topics from other clients will no longer be
 	// received.
 	Unsubscribe(topics ...string) Result
+
+	// ClientID returns the client id the client connects with: the one it
+	// was created with, or the one the server renewed it with since (see
+	// WithClientIDHandler).
+	ClientID() string
+	// Keygen asks the server for topic keys, which only a primary client id,
+	// or a connection trusted as a service's, may. The result is a
+	// *KeygenResult, which holds the keys and their uuids.
+	Keygen(reqs ...KeyRequest) Result
+	// RequestClientID asks the server for a new secondary client id of the
+	// client's contract, which only a primary client id may. The result is a
+	// *ClientIDResult, which holds the id and its uuid.
+	RequestClientID() Result
+	// Revoke revokes a client id or topic key of the client's contract by its
+	// uuid, until the time given, or for ever if it is zero. Only a primary
+	// client id may. The result is a *RequestResult.
+	Revoke(uuid string, until time.Time) Result
+	// RevokeAll revokes every client id and topic key the client's contract
+	// was issued before now, its own id included. Only a primary client id
+	// may. The result is a *RequestResult.
+	RevokeAll() Result
+	// Vouch vouches for the connection with a trusted service's client id
+	// of the client's contract, so that it needs no topic keys. The result
+	// is a *RequestResult.
+	Vouch(serviceID string) Result
 }
 
 type client struct {
@@ -101,6 +126,16 @@ type client struct {
 	subsMu sync.Mutex
 	subs   map[string]*utp.Subscription
 
+	// idMu guards opts.clientID, which the server may renew, and storeDir,
+	// the directory of the client's store.
+	idMu     sync.Mutex
+	storeDir string
+
+	// pending are the requests to the server's API not answered yet, in
+	// the order they were sent.
+	reqMu   sync.Mutex
+	pending []*pendingRequest
+
 	// Close.
 	closeC chan struct{}
 	closeW sync.WaitGroup
@@ -136,13 +171,14 @@ func NewClient(target, clientID string, opts ...Options) (Client, error) {
 	return c, nil
 }
 
-// openStore opens the client's message store.
+// openStore opens the client's message store, in the directory named after
+// its client id, or the one a renewed id links to (see linkStore).
 func (c *client) openStore() error {
-	path := c.opts.storePath
-	if c.opts.clientID != "" {
-		path = path + "/" + c.opts.clientID
-	}
-	return store.Open(path, int64(c.opts.storeSize), false)
+	c.idMu.Lock()
+	dir := resolveStore(c.opts.storePath, c.opts.clientID)
+	c.storeDir = dir
+	c.idMu.Unlock()
+	return store.Open(dir, int64(c.opts.storeSize), false)
 }
 
 func StreamConn(
@@ -181,6 +217,7 @@ func (c *client) close() error {
 	if !c.setClosed() {
 		return errors.New("error disconnecting client")
 	}
+	c.failRequests(0, errClientClosed)
 	c.connMu.Lock()
 	gen := c.connGen
 	c.connMu.Unlock()
@@ -339,6 +376,8 @@ func (c *client) connLost(gen uint64, err error) {
 	if conn != nil {
 		conn.Close()
 	}
+	// The server answers a request on the connection it came on.
+	c.failRequests(gen, errRequestConnLost)
 	if c.opts.connectionLostHandler != nil {
 		go c.opts.connectionLostHandler(c, err)
 	}
@@ -436,10 +475,13 @@ func (c *client) attemptConnection(ctx context.Context, clean bool) error {
 		}
 
 		// get Connect message from options.
+		// The client id is the server's latest renewal of it.
+		c.idMu.Lock()
 		cm := newConnectMsgFromOptions(c.opts, uri)
+		c.idMu.Unlock()
 		cm.CleanSessFlag = clean
 		rc, epoch, connID, cerr := Connect(conn, cm)
-		if cerr == nil && rc == utp.Accepted {
+		if cerr == nil && rc == ConnAccepted {
 			c.connMu.Lock()
 			c.conn = conn
 			c.connMu.Unlock()
@@ -458,7 +500,7 @@ func (c *client) attemptConnection(ctx context.Context, clean bool) error {
 		if cerr != nil {
 			err = cerr
 		} else {
-			err = fmt.Errorf("connection to %s refused, return code %d", uri.Host, rc)
+			err = &ConnectError{Server: uri.Host, ReturnCode: rc}
 		}
 	}
 	return err
