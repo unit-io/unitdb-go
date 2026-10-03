@@ -313,8 +313,11 @@ func WithConnectionLostHandler(handler ConnectionLostHandler) Options {
 //
 // A server that issues v2 client ids renews a client id on connect, sending
 // the same id sealed again with a new expiry, when the client connected with
-// a v1 id, with an id sealed with a key being retired, or with one past 80%
-// of its lifetime. The client adopts the renewed id whether or not a handler is
+// an id sealed with a key being retired, or with one past 80% of its
+// lifetime. A v0.6.0 server also renews a v1 id; since v0.7.0 a v1 id is
+// refused (ConnRefusedIDRejected) and not renewed: renew it first, by
+// connecting to a v0.6.0 server, or have the server's owner seal it again
+// as a v2 id (unitdb's mintid -from). The client adopts the renewed id whether or not a handler is
 // set: it connects and reconnects with it from then on, and keeps its local
 // store (see WithStorePath). The id given to NewClient is not renewed for
 // the next run of the application, though: persist the id the handler is

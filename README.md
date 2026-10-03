@@ -36,14 +36,14 @@ key := r.(*udb.KeygenResult).Keys()[0] // key.Key, and key.UUID to revoke it wit
 client.Subscribe(key.Key + "/teams.alpha.ch1")
 ```
 
-Without a TTL a key lasts the server's `topic_key_ttl`, for ever by default. Client IDs and keys are opaque: the server's v2 client IDs are 94 characters, and its v2 keys 48, of base64url, which includes `-` and `_`.
+Without a TTL a key lasts the server's `topic_key_ttl`, for ever by default. Client IDs and keys are opaque: the server's v2 client IDs are 94 characters, and its v2 keys 48, of base64url, which includes `-` and `_`. Since unitdb v0.7.0 the server issues and takes v2 IDs and keys only: it refuses a v1 client ID (52 characters) at connect with return code 2, and a v1 signed key or an unsigned one with an error notice of status 401 on `unitdb/error/`. A v0.6.0 server still takes them, and renews a v1 ID (see below), so move clients to v2 IDs and keys on v0.6.0 before upgrading.
 
 `WithInsecure()` connects with the insecure flag, which skips topic keys. Since unitdb v0.6.0 a server refuses it, and `Connect` returns the refusal (return code 4), unless the server's config sets `"allow_insecure": true`, which is for development only and which a cluster node refuses to start with. Use it only for tests and debugging against such a standalone server.
 
 A trusted backend, such as an API server acting for its users, needs no topic keys either: give it a service client ID, which only the server's `mintid` command issues, with the server's key (`go run ./server/cmd/mintid -config unitdb.conf -service` in the unitdb repository), and connect with it without `WithInsecure()`. A connection the backend opens for a user, with the user's client ID, skips topic keys once it vouches for it with `client.Vouch(serviceID)`, which publishes `{"client_id": "<the service's client ID>"}` to `unitdb/service`; vouch again after a reconnect. Keep service IDs on servers, never on clients or devices. Topics whose first part starts with `$` are reserved for the server.
 
 ### Client ID renewal
-A server with v2 client IDs renews a client's ID when it connects with a v1 ID, with one sealed with a key being retired, or with one past 80% of its lifetime: it sends the same ID sealed again, with a new expiry, on `unitdb/clientid/`. The client adopts it, and connects and reconnects with it from then on. Persist it, and create the client with it next time, as an expired ID is refused (`Connect` returns a `*udb.ConnectError` with return code 2, `udb.ConnRefusedIDRejected`):
+A server with v2 client IDs renews a client's ID when it connects with one sealed with a key being retired, or with one past 80% of its lifetime (a v0.6.0 server also renews a v1 ID, which v0.7.0 refuses instead): it sends the same ID sealed again, with a new expiry, on `unitdb/clientid/`. The client adopts it, and connects and reconnects with it from then on. Persist it, and create the client with it next time, as an expired ID is refused (`Connect` returns a `*udb.ConnectError` with return code 2, `udb.ConnRefusedIDRejected`):
 
 ```golang
 udb.WithClientIDHandler(func(_ udb.Client, clientID string) { saveClientID(clientID) })
@@ -60,10 +60,10 @@ client.Revoke(idResult.UUID(), time.Now().Add(time.Hour)) // until then
 client.RevokeAll()
 ```
 
-Each completes with the server's answer: `Get` returns a `*udb.RequestError` with status 400, 403 (not a primary client) or 503 (a cluster with nodes that don't read v2 IDs and keys yet) if the server refused. A revoked client ID is refused at connect with return code 2, a revoked key with an error notice of status 401 on `unitdb/error/`; connections and subscriptions already open stay.
+Each completes with the server's answer: `Get` returns a `*udb.RequestError` with status 400, 403 (not a primary client) or, from a v0.6.0 server, 503 (a cluster with nodes that don't read v2 IDs and keys yet) if the server refused; a v0.7.0 server always takes them. A revoked client ID is refused at connect with return code 2, a revoked key with an error notice of status 401 on `unitdb/error/`; connections and subscriptions already open stay.
 
 ### Return codes
-`Connect` fails with a `*udb.ConnectError` holding the server's return code: 0x01 unacceptable proto version, 0x02 identifier rejected (also an expired or revoked ID), 0x03 identifier not allowed access, 0x04 not authorized (a refused key, or the insecure flag on a server without `allow_insecure`), 0x05 server error, 0x06 authentication failed, 0x07 forbidden, 0x08 session in use, 0x09 unknown epoch. The server's `utp` package names 0x04 `ErrRefusedServerUnavailable`; the client's `ConnRefusedNotAuthorized` names it as the server uses it.
+`Connect` fails with a `*udb.ConnectError` holding the server's return code: 0x01 unacceptable proto version, 0x02 identifier rejected (also an expired or revoked ID, and a v1 ID since v0.7.0), 0x03 identifier not allowed access, 0x04 not authorized (a refused key, or the insecure flag on a server without `allow_insecure`), 0x05 server error, 0x06 authentication failed, 0x07 forbidden, 0x08 session in use, 0x09 unknown epoch. The server's `utp` package names 0x04 `ErrRefusedServerUnavailable`; the client's `ConnRefusedNotAuthorized` names it as the server uses it.
 
 ### Reconnecting
 By default a client closes when its connection is lost, and calls the handler set with `WithConnectionLostHandler`. With `WithAutoReconnect()` it connects again by itself instead, trying each server in turn, for example the other nodes of a cluster:

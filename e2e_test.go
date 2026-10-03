@@ -699,7 +699,8 @@ func TestE2ERetryAfterFailedConnect(t *testing.T) {
 
 func TestE2EConnectWithUnknownClientID(t *testing.T) {
 	requireServer(t)
-	// Well formed, but not issued by this server.
+	// Well formed, but not issued by this server; shaped as a v1 id, which a
+	// v0.7.0 server refuses with the same return code.
 	c, err := NewClient(tcpTarget(), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", WithStorePath(storeDir(t)))
 	if err != nil {
 		t.Fatal(err)

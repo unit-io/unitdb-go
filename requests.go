@@ -46,8 +46,9 @@ type TopicKey struct {
 	// and '_'.
 	Key string
 	// UUID is the key's uuid in decimal, to revoke it with (see
-	// Client.Revoke). A v1 key, which a cluster with nodes that don't read
-	// v2 keys still issues, has none.
+	// Client.Revoke). A v1 key has none: only a v0.6.0 server, in a cluster
+	// with nodes that don't read v2 keys, still issues one; since v0.7.0
+	// servers issue v2 keys only, and refuse v1 and unsigned keys.
 	UUID string
 }
 
@@ -163,11 +164,13 @@ func (c *client) Revoke(uuid string, until time.Time) Result {
 }
 
 // RevokeAll revokes every client id and topic key the client's contract was
-// issued before now, in whole seconds, and every v1 one, which carry no
-// issue time. That includes the client's own id: it is refused the next
-// time it connects, and its contract's clients need ids the primary client
-// requests after this. Only a primary client id may. The result is a
-// *RequestResult.
+// issued before now, in whole seconds (on a v0.6.0 server, every v1 one
+// too, which carry no issue time; v0.7.0 refuses those anyway). That
+// includes the client's own id: it is refused the next time it connects,
+// and its contract's clients need ids the primary client requests after
+// this. Only a primary client id may. The result is a *RequestResult; a
+// v0.6.0 server in a cluster with nodes that don't read v2 ids and keys
+// refuses it with status 503.
 func (c *client) RevokeAll() Result {
 	r := newRequestResult()
 	c.request(topicRevoke, []byte(`{"all":true}`), r)
