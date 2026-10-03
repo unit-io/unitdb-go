@@ -15,8 +15,9 @@ const (
 	// ConnRefusedBadProtocolVersion: the protocol version is not supported.
 	ConnRefusedBadProtocolVersion uint8 = 0x01
 	// ConnRefusedIDRejected: the client id is not valid, or has expired or
-	// been revoked. An expired or revoked id needs a new one, which the
-	// contract's primary client requests (see Client.RequestClientID).
+	// been revoked, or is a v1 id, which servers refuse since v0.7.0. An
+	// expired or revoked id needs a new one, which the contract's primary
+	// client requests (see Client.RequestClientID).
 	ConnRefusedIDRejected uint8 = 0x02
 	// ConnRefusedBadID: the client id is not allowed access.
 	ConnRefusedBadID uint8 = 0x03

@@ -291,7 +291,8 @@ func (r *ClientIDResult) ClientID() string {
 }
 
 // UUID returns the client id's uuid in decimal, to revoke it with (see
-// Client.Revoke), or "" for a v1 id, which has none.
+// Client.Revoke), or "" for a v1 id, which has none: only a v0.6.0 server,
+// in a cluster with nodes that don't read v2 ids, still issues one.
 func (r *ClientIDResult) UUID() string {
 	r.m.RLock()
 	defer r.m.RUnlock()

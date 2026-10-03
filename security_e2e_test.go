@@ -130,17 +130,21 @@ func requestStatus(t *testing.T, desc string, r Result) int {
 	return r.(interface{ Status() int }).Status()
 }
 
-// TestE2EClientIDRenewal connects with a v1 client id, which the server
-// renews: the client adopts the renewed id, tells the application, connects
-// with it again after it loses its connection, and a client created with it
-// later opens the same local store and resumes its session.
+// TestE2EClientIDRenewal connects with a client id past 80% of its lifetime,
+// which the server renews: the client adopts the renewed id, tells the
+// application, connects with it again after it loses its connection, and a
+// client created with it later opens the same local store and resumes its
+// session. (A v0.6.0 server also renews v1 ids; v0.7.0 refuses them.)
 func TestE2EClientIDRenewal(t *testing.T) {
 	requireV2Server(t)
 	n := startStandalone(t, "")
-	v1 := mintID(t, "-v1")
-	if len(v1) != 52 {
-		t.Fatalf("mintid -v1 gave %q", v1)
+	// Renewed past 4 of its 6 seconds; the renewed id, of the server's
+	// default lifetime, never expires.
+	ageing := mintID(t, "-ttl", "6s")
+	if !isV2ClientID(ageing) {
+		t.Fatalf("mintid -ttl gave %q", ageing)
 	}
+	time.Sleep(4200 * time.Millisecond)
 
 	dir := storeDir(t)
 	sessKey := nextSessKey()
@@ -153,7 +157,7 @@ func TestE2EClientIDRenewal(t *testing.T) {
 		WithMaxReconnectInterval(500*time.Millisecond),
 		WithClientIDHandler(func(_ Client, id string) { renewals <- id }),
 	)
-	c := newE2EClient(t, "tcp://"+n.tcpAddr, v1, opts...)
+	c := newE2EClient(t, "tcp://"+n.tcpAddr, ageing, opts...)
 	events.waitConnected(t, e2eTimeout)
 
 	var renewed string
@@ -162,20 +166,21 @@ func TestE2EClientIDRenewal(t *testing.T) {
 	case <-time.After(e2eTimeout):
 		t.Fatal("the client id handler was not called")
 	}
-	if !isV2ClientID(renewed) {
-		t.Fatalf("renewed client id %q is not a v2 one", renewed)
+	if !isV2ClientID(renewed) || renewed == ageing {
+		t.Fatalf("renewed client id %q, from %q", renewed, ageing)
 	}
 	if got := c.ClientID(); got != renewed {
 		t.Fatalf("ClientID() = %q, want the renewed %q", got, renewed)
 	}
 	// The store stays in the old id's directory, which the new id links to.
-	if got := resolveStore(dir, renewed); got != filepath.Join(dir, v1) {
-		t.Fatalf("the renewed id's store is %q, want %q", got, filepath.Join(dir, v1))
+	if got := resolveStore(dir, renewed); got != filepath.Join(dir, ageing) {
+		t.Fatalf("the renewed id's store is %q, want %q", got, filepath.Join(dir, ageing))
 	}
 	waitResult(t, "publish", c.Publish("e2e.renew", []byte("first")))
 
-	// The client reconnects with the renewed id: the server, which renews v1
-	// ids, sends no new one.
+	// The client reconnects with the renewed id: the server sends no new one,
+	// as it would for the ageing id, which by then has expired and would be
+	// refused.
 	n.stop()
 	events.waitLost(t)
 	if err := n.start(); err != nil {
@@ -185,7 +190,7 @@ func TestE2EClientIDRenewal(t *testing.T) {
 	waitResult(t, "publish after the reconnect", c.Publish("e2e.renew", []byte("again")))
 	select {
 	case id := <-renewals:
-		t.Fatalf("the client was renewed again, with %q: it reconnected with the v1 id", id)
+		t.Fatalf("the client was renewed again, with %q: it reconnected with the ageing id", id)
 	case <-time.After(time.Second):
 	}
 	if got := c.ClientID(); got != renewed {
@@ -197,7 +202,7 @@ func TestE2EClientIDRenewal(t *testing.T) {
 	}
 
 	// The run left a publish the server never acknowledged, in its session.
-	if err := store.Open(filepath.Join(dir, v1), 1<<27, false); err != nil {
+	if err := store.Open(filepath.Join(dir, ageing), 1<<27, false); err != nil {
 		t.Fatal(err)
 	}
 	rawSess, err := store.Session.Get(uint64(sessKey))
